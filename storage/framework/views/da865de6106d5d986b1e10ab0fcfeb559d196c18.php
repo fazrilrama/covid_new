@@ -1,12 +1,10 @@
-
-
 <?php $__env->startSection('title', 'Integrated Logistics Solution'); ?>
 
 <?php $__env->startSection('content_header'); ?>
 <h1><?php if($type=='inbound'): ?> Advance Inbound Notice <?php else: ?> Advance Outbound Notice <?php endif; ?> List
     
     <form action="<?php echo e(route('advance_notices.index',$type)); ?>" method="GET">
-        <?php if(Auth::user()->hasRole('CargoOwner') || (Auth::user()->hasRole('WarehouseSupervisor') && session()->get('current_project')->id == '337')): ?>
+        <?php if(Auth::user()->hasRole('CargoOwner') || (Auth::user()->hasRole('WarehouseSupervisor'))): ?>
             <a href="<?php echo e(url('advance_notices/create/'.$type)); ?>" type="button" class="btn btn-sm btn-success" title="Create">
                 <i class="fa fa-plus"></i> <?php echo e(__('lang.create')); ?>
 
