@@ -1,0 +1,233 @@
+.f-right {
+	float: right;
+}
+
+.f-left {
+	float: left;
+}
+
+.main-header .logo {
+	height: auto;
+}
+
+.main-header .logo img {
+	width: 100%;
+	height: auto;
+	padding: 10px 0px;
+}
+
+.main-header {
+	max-height: none;
+}
+
+.skin-green-light .main-header .navbar {
+	background-color: white;
+	border-bottom: 7px solid #01afa7;
+}
+
+.skin-green-light .main-header .navbar .sidebar-toggle {
+	color: #01afa7;
+}
+
+.skin-green-light .main-header .logo {
+	background-color: white;
+}
+.skin-green-light .main-header .navbar .sidebar-toggle:hover {
+	background-color: white;
+	color: #01afa7;
+}
+.skin-green-light .main-header .logo:hover {
+	background-color: white;
+}
+
+.sidebar-menu {
+	background-color: #01afa7;
+}
+.skin-green-light .sidebar-menu>li.active>a {
+	background-color: #01afa7;
+}
+
+.skin-green-light .sidebar-menu>li:hover>a, .skin-green-light .sidebar-menu>li.active>a {
+	background-color: #01afa7;
+	color: yellow;
+}
+
+.skin-green-light .sidebar-menu>li>a {
+	color: white;
+}
+
+.skin-green-light .sidebar-menu>li>.treeview-menu {
+	background-color: #01afa7;
+}
+
+.skin-green-light .sidebar-menu .treeview-menu>li>a {
+	color: #FFF;
+	white-space: normal;
+}
+
+.treeview-menu>li>a {
+	padding: 5px 5px 5px 35px;
+}
+
+.skin-green-light .sidebar-menu .treeview-menu>li.active>a, .skin-green-light .sidebar-menu .treeview-menu>li>a:hover {
+	color: yellow;
+}
+
+.content-wrapper {
+	background: white;
+}
+
+.skin-green-light .main-sidebar {
+    background-color: #01afa7;
+    border-right: none;
+}
+
+.skin-green-light .sidebar-menu>li.header {
+	font-size: 15px;
+}
+
+.navbar-custom-menu .f-right p {
+	margin-bottom: 0px;
+}
+
+.sidebar-mini.sidebar-collapse .main-header .logo>.logo-mini {
+	height: 75px;
+}
+
+.login-box-msg {
+    text-align: center;
+    font-size: 17px;
+    color: #01afa7;
+}
+
+.login-page, .register-page {
+	background: white;
+}
+.login-box-body, .register-box-body {
+	background: #e9e9e1;
+	padding: 25px;
+	box-shadow: 1px 1px 1px;
+}
+
+.login-box, .register-box {
+	width: 400px;
+}
+
+.login-box a{
+	color: #01afa7;
+}
+
+.login-box button {
+	background-color: #01afa7;
+	border: 1px solid black;
+}
+
+.login-box input {
+	border: 1px solid #8080807a;
+    border-radius: 10px;
+}
+.register-box a {
+	color: #01afa7;
+}
+
+.header-form-login {
+	margin-bottom: 15px;
+}
+
+.center {
+	text-align: center;
+}
+.forgot-password {
+	text-align: center;
+	font-weight: bold;
+	font-size: 20px;
+	padding: 10px 0px 0px 0px;
+}
+
+.box {
+	border-top: 3px solid #01afa7;
+}
+
+.pagination>.active>a, .pagination>.active>a:focus, .pagination>.active>a:hover, .pagination>.active>span, .pagination>.active>span:focus, .pagination>.active>span:hover {
+	background-color: #01afa7;
+    border-color: #01afa7;
+}
+
+.skin-green-light .main-header .navbar .nav>li>a {
+    color: #000; 
+}
+
+.skin-green-light .main-header .navbar .nav>li>a:hover, .skin-green-light .main-header .navbar .nav>li>a:active, .skin-green-light .main-header .navbar .nav>li>a:focus, .skin-green-light .main-header .navbar .nav .open>a, .skin-green-light .main-header .navbar .nav .open>a:hover, .skin-green-light .main-header .navbar .nav .open>a:focus, .skin-green-light .main-header .navbar .nav>.active>a {
+	background-color: #FFF;
+	color: #018b96;
+}
+
+.form-group.required .control-label:after {
+  content:"*";
+  color:red;
+}
+
+@media only screen and (min-width: 1024px) {
+    .skin-green-light .main-header .navbar .sidebar-toggle {
+	 	position: relative;
+	    top: 10px;
+ 	}
+
+ 	.main-sidebar {
+		padding-top: 75px;
+	}
+
+ 	.navbar-custom-menu {
+ 		height: 75px;
+	    display: flex;
+	    align-items: center;
+	    justify-content: flex-end;
+ 	}
+} 
+
+@media only screen and (max-width: 1024px) {
+	.skin-green-light .main-header .navbar {
+		display: flex;
+	    justify-content: center;
+	    align-items: center;
+	}
+
+	.main-footer {
+		text-align: center;
+	}
+
+	.main-header .logo img {
+		width: 50%;
+	}
+
+}
+
+.row-verification {
+    margin-bottom: 10px;
+}
+
+.div-item {
+    border-radius: 3px;
+    background-color: #f3f3f3;
+    padding: 10px;
+    margin-bottom: 10px;
+}
+
+.margin-right {
+    margin-right: 10px;
+}
+
+.pick-location-field {
+    border: 1px solid #f43636;
+    padding: 10px;
+    border-radius: 5px;
+}
+
+.pac-container {
+    z-index: 1100 !important;
+}
+
+.checkbox-roles {
+	border: 1px solid #ccc;
+	padding: 10px;
+}

@@ -1,0 +1,1267 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\AdvanceNotice;
+use App\AdvanceNoticeDetail;
+use App\AdvanceNoticeActivity;
+use App\StockTransportDetail;
+use App\StockDelivery;
+use App\StockDeliveryDetail;
+use App\StockEntry;
+use App\WarehouseOfficer;
+use App\StockTransport;
+use App\Contract;
+use App\ContractWarehouse;
+use App\City;
+use App\Company;
+use App\TransportType;
+use App\Party;
+use App\Warehouse;
+use App\Storage;
+use App\Project;
+use App\PartyType;
+use App\DataLog;
+use App\AssignedTo;
+use Auth;
+use Carbon;
+use App\Spk;
+use App\User;
+use App\RoleUser;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Mail;
+use App\Jobs\InboundOutbondJob;
+use App\Rules\AinAonClosingRule;
+// use App\Mail\InboundSPBM;
+// use App\Mail\InboundSPBMEdit;
+// use App\Mail\OutboundSPBK;
+// use App\Mail\OutboundSPBKEdit;
+
+use PDF;
+use App\Mail\AinAonClosed;
+use App\Mail\AnReject;
+use Validator;
+
+use Maatwebsite\Excel\Facades\Excel;
+use App\Exports\AdvanceNoticeExport;
+
+class AdvanceNoticeController extends Controller
+{
+    protected $user;
+    
+    public function __construct()
+    {
+        $this->middleware(function ($request, $next) {
+            $user = Auth::user();
+            if ( $user->hasRole('Superadmin') ) {
+            }
+            if ( $user->hasRole('Admin') || $user->hasRole('Admin-BGR') || $user->hasRole('Admin-Client') ) {
+                if (empty(session()->get('current_project'))) {
+                    return redirect('empty-project');
+                }
+            }else if (empty(session()->get('current_project'))) {
+                return redirect('empty-project');
+            }
+
+            return $next($request);
+        });
+    }
+
+
+
+    public function index($type = 'inbound', Request $request)
+    {
+        $message = NULL;
+        $collections = null;
+        $collections_closed = [];
+        // 1. Kalau ada data cabang, filter datanya
+        if(Auth::user()->branch && !Auth::user()->hasRole('CargoOwner')) {
+            // 1. Kalau inbound, keluarkan data dimana consignee equals to user branch data
+            $collections = AdvanceNotice::where('type',$type)
+                    // ->select(['user_id','id','code','origin_id','destination_id','consignee_id','shipper_id',
+                    // 'etd','eta','status','user_id2','warehouse_id'])
+                    ->where('project_id', session()->get('current_project')->id);
+                    if(session()->get('current_project')->id != 337) {
+                        $collections->whereIn('status',['Completed']);
+                    }else {
+                        $collections->whereIn('status',['Processed', 'Completed', 'Pending']);
+                    }
+                    $collections
+                    ->where('advance_notice_activity_id','<>', 20)
+                    ->orderBy('id', 'desc');
+            $collections_closed = AdvanceNotice::where('type',$type)
+            // ->select(['user_id','id','code','origin_id','destination_id','consignee_id','shipper_id',
+            // 'etd','eta','status','user_id2','warehouse_id'])
+            ->where('project_id', session()->get('current_project')->id)
+            ->where('advance_notice_activity_id','<>', 20)
+            ->whereIn('status',['Closed'])
+            ->orderBy('id', 'desc');
+                    
+                    // ->get(['user_id','id','code','origin_id','destination_id','consignee_id','shipper_id','etd','eta','status','employee_name']);
+
+            if($type == 'inbound') {
+                // $collections = $collections->filter(function ($item) {
+                //     return $item->consignee_id == Auth::user()->branch->id;
+                // });
+                $collections = $collections->where('consignee_id', Auth::user()->branch->id);
+                $collections_closed = $collections_closed->where('consignee_id', Auth::user()->branch->id);
+
+            } else {
+                // 2. Kalau outbound, keluarkan data dimana shipper equals to user branch data
+                // $collections = $collections->filter(function ($item) {
+                //     return $item->shipper_id == Auth::user()->branch->id;
+                // });
+                $collections = $collections->where('shipper_id', Auth::user()->branch->id);
+                $collections_closed = $collections_closed->where('shipper_id', Auth::user()->branch->id);
+
+
+            }
+
+            // 2. Kalau yg login WH supervisor, di filter lg datanya berdasarkan yang di assign ke dia saja
+            if(Auth::user()->hasRole('WarehouseSupervisor')) {
+                // $collections = $collections->filter(function ($item) {
+                //     $item->employee_name = strtolower($item->employee_name);
+                //     if(Auth::user()->last_name) {
+                //         return $item->employee_name == strtolower(Auth::user()->first_name).' '.strtolower(Auth::user()->last_name);
+                //     } else {
+                //         return $item->employee_name == strtolower(Auth::user()->first_name);
+                //     }
+                // });
+                $collections = $collections->where('employee_name', strtolower(Auth::user()->first_name).' '.strtolower(Auth::user()->last_name));
+                $collections_closed = $collections_closed->where('employee_name', strtolower(Auth::user()->first_name).' '.strtolower(Auth::user()->last_name));
+            }
+            $collections = $collections->limit(2000)->get();
+            $collections_closed = $collections_closed->limit(2000)->get();
+        }
+
+        if(Auth::user()->hasRole('CargoOwner')) {
+            
+            $collections = AdvanceNotice::where('type',$type)
+                    ->where('project_id', session()->get('current_project')->id) 
+                    ->where('user_id',Auth::user()->id) 
+                    ->orderBy('id', 'desc')
+                    ->limit(2000)
+                    ->get(['user_id','id','code','origin_id','destination_id','shipper_id','consignee_id','etd','eta','status','employee_name', 'ref_code', 'created_at']);
+        }
+
+          
+        if($collections) {
+            //hitung outstanding secara keseluruhan
+            foreach ($collections as $collection) {
+                $total_items = $collection->details->sum('qty');
+                $delivered_items = 0;
+                $transports = $collection->transports()->ofStatus(['Completed','Processed'])->get();
+                foreach ($transports as $transport) {
+                    if($type=='inbound'){
+                        $delivered_items += $transport->details->sum('qty');
+                    }
+                    else{
+                        $delivered_items += $transport->details->sum('plan_qty');
+                    }
+                }
+                $collection->outstanding = $total_items - $delivered_items;
+                
+                //hitung outstanding per detail item
+                $detail_advance_notices[$collection->id] = AdvanceNoticeDetail::where('stock_advance_notice_id',$collection->id)->get();
+
+                foreach($detail_advance_notices[$collection->id] as $detail){
+                    $inbound = AdvanceNoticeDetail::join('stock_advance_notices as san', 'san.id', '=', 'stock_advance_notice_details.stock_advance_notice_id')
+                    //->where('san.status', 'Closed')
+                    ->where([
+                        'stock_advance_notice_details.item_id' => $detail->item_id,
+                        'stock_advance_notice_details.ref_code' => $detail->ref_code,
+                        'san.id' => $collection->id,
+                    ])
+                    ->sum('stock_advance_notice_details.qty');
+                    
+
+                    if($type == 'inbound'){
+                        $outbound_completed = StockTransportDetail::join('stock_transports as st', 'st.id', '=', 'stock_transport_details.stock_transport_id')
+                        ->where('st.status', 'Completed')
+                        ->where([
+                            'stock_transport_details.item_id' => $detail->item_id,
+                            'stock_transport_details.ref_code' => $detail->ref_code,
+                            'st.advance_notice_id' => $collection->id
+                        ])
+                        ->sum('stock_transport_details.qty');
+                    
+                    }
+                    //ketika dp, data plan adalah actual
+                    else{
+                        $outbound_completed = StockTransportDetail::join('stock_transports as st', 'st.id', '=', 'stock_transport_details.stock_transport_id')
+                        ->where('st.status', 'Completed')
+                        ->where([
+                            'stock_transport_details.item_id' => $detail->item_id,
+                            'stock_transport_details.ref_code' => $detail->ref_code,
+                            'st.advance_notice_id' => $collection->id
+                        ])
+                        ->sum('stock_transport_details.plan_qty');
+                    }
+
+                    $outbound_incompleted = StockTransportDetail::join('stock_transports as st', 'st.id', '=', 'stock_transport_details.stock_transport_id')
+                        ->where('st.status', 'Processed')
+                        ->where([
+                            'stock_transport_details.item_id' => $detail->item_id,
+                            'stock_transport_details.ref_code' => $detail->ref_code,
+                            'st.advance_notice_id' => $collection->id
+                        ])
+                        ->sum('stock_transport_details.plan_qty');
+
+                        //return $stockTransport->advance_notice_id;
+
+                    $detail->detail_outstanding = $inbound - ($outbound_completed + $outbound_incompleted);
+                }
+            }
+        }
+        // closed
+        if($collections_closed != null) {
+            //hitung outstanding secara keseluruhan
+            foreach ($collections_closed as $collection) {
+                $total_items = $collection->details->sum('qty');
+                $delivered_items = 0;
+                $transports = $collection->transports()->ofStatus(['Completed','Processed'])->get();
+                foreach ($transports as $transport) {
+                    if($type=='inbound'){
+                        $delivered_items += $transport->details->sum('qty');
+                    }
+                    else{
+                        $delivered_items += $transport->details->sum('plan_qty');
+                    }
+                }
+                $collection->outstanding = $total_items - $delivered_items;
+                
+                //hitung outstanding per detail item
+                $detail_advance_notices[$collection->id] = AdvanceNoticeDetail::where('stock_advance_notice_id',$collection->id)->get();
+
+                foreach($detail_advance_notices[$collection->id] as $detail){
+                    $inbound = AdvanceNoticeDetail::join('stock_advance_notices as san', 'san.id', '=', 'stock_advance_notice_details.stock_advance_notice_id')
+                    //->where('san.status', 'Closed')
+                    ->where([
+                        'stock_advance_notice_details.item_id' => $detail->item_id,
+                        'stock_advance_notice_details.ref_code' => $detail->ref_code,
+                        'san.id' => $collection->id,
+                    ])
+                    ->sum('stock_advance_notice_details.qty');
+                    
+
+                    if($type == 'inbound'){
+                        $outbound_completed = StockTransportDetail::join('stock_transports as st', 'st.id', '=', 'stock_transport_details.stock_transport_id')
+                        ->where('st.status', 'Completed')
+                        ->where([
+                            'stock_transport_details.item_id' => $detail->item_id,
+                            'stock_transport_details.ref_code' => $detail->ref_code,
+                            'st.advance_notice_id' => $collection->id
+                        ])
+                        ->sum('stock_transport_details.qty');
+                    
+                    }
+                    //ketika dp, data plan adalah actual
+                    else{
+                        $outbound_completed = StockTransportDetail::join('stock_transports as st', 'st.id', '=', 'stock_transport_details.stock_transport_id')
+                        ->where('st.status', 'Completed')
+                        ->where([
+                            'stock_transport_details.item_id' => $detail->item_id,
+                            'stock_transport_details.ref_code' => $detail->ref_code,
+                            'st.advance_notice_id' => $collection->id
+                        ])
+                        ->sum('stock_transport_details.plan_qty');
+                    }
+
+                    $outbound_incompleted = StockTransportDetail::join('stock_transports as st', 'st.id', '=', 'stock_transport_details.stock_transport_id')
+                        ->where('st.status', 'Processed')
+                        ->where([
+                            'stock_transport_details.item_id' => $detail->item_id,
+                            'stock_transport_details.ref_code' => $detail->ref_code,
+                            'st.advance_notice_id' => $collection->id
+                        ])
+                        ->sum('stock_transport_details.plan_qty');
+
+                        //return $stockTransport->advance_notice_id;
+
+                    $detail->detail_outstanding = $inbound - ($outbound_completed + $outbound_incompleted);
+                }
+            }
+        }
+        //untuk keperluan modal detail outstanding
+        
+
+        if($request->get('submit')){
+            return Excel::download(new AdvanceNoticeExport($collections,$type), $type.'List.xlsx');
+        }
+        else{
+            //return $collections;
+             //merapikan struktur array untuk di convert to excel
+             foreach($collections as $collection){
+
+                $collection->item_code = $collection->code;
+
+                if($type=='inbound'){
+                    $collection->item_storage_area = $collection->consignee['name'];
+                    $collection->consingee_name = $collection->shipper['name'];
+                }
+                else{
+                    $collection->item_storage_area = $collection->shipper['name'];
+                    $collection->consingee_name = $collection->consignee['name'];
+
+                }
+                
+
+                $collection->item_origin = $collection->origin->name;
+                $collection->item_destination = $collection->destination->name;
+
+                      
+                $collection->item_etd = $collection->etd;
+                $collection->item_eta = $collection->eta;
+
+                $collection->item_outstanding = $collection->outstanding;
+                
+                $collection->item_status = $collection->status;
+                $collection->item_employee_name = $collection->employee_name;
+                $collection->item_ref_code = $collection->ref_code;
+                $collection->item_created_at = $collection->created_at;
+                // dd($collection->consignee);
+                unset($collection->code);
+                unset($collection->consignee_id);
+                unset($collection->shipper_id);
+                unset($collection->origin_id);
+                unset($collection->destination_id);
+                unset($collection->warehouse_id);
+                unset($collection->consignee);
+                unset($collection->shipper);
+                unset($collection->origin);
+                unset($collection->consignee_name);
+                unset($collection->destination);
+                unset($collection->details);
+                unset($collection->etd);
+                unset($collection->eta);
+                unset($collection->ref_code);
+                unset($collection->created_at);
+                //unset($collection->status);
+                unset($collection->employee_name);
+                unset($collection->outstanding);
+                // dd($collection->consingee_name);
+            }
+            foreach($collections_closed as $collection){
+
+                $collection->item_code = $collection->code;
+
+                if($type=='inbound'){
+                    $collection->item_storage_area = $collection->consignee['name'];
+                    $collection->consingee_name = $collection->shipper['name'];
+
+                }
+                else{
+                    $collection->item_storage_area = $collection->shipper['name'];
+                    $collection->consingee_name = $collection->consignee['name'];
+                }
+
+                $collection->item_origin = $collection->origin->name;
+                $collection->item_destination = $collection->destination->name;
+
+                      
+                $collection->item_etd = $collection->etd;
+                $collection->item_eta = $collection->eta;
+
+                $collection->item_outstanding = $collection->outstanding;
+                
+                $collection->item_status = $collection->status;
+                $collection->item_employee_name = $collection->employee_name;
+                $collection->item_ref_code = $collection->ref_code;
+                $collection->item_created_at = $collection->created_at;
+                // dd($collection->item_storage_area);
+                unset($collection->code);
+                unset($collection->consignee_id);
+                unset($collection->shipper_id);
+                unset($collection->origin_id);
+                unset($collection->destination_id);
+                unset($collection->warehouse_id);
+                unset($collection->consignee);
+                unset($collection->shipper);
+                unset($collection->origin);
+                unset($collection->consignee_name);
+                unset($collection->destination);
+                unset($collection->details);
+                unset($collection->etd);
+                unset($collection->eta);
+                unset($collection->ref_code);
+                unset($collection->created_at);
+                //unset($collection->status);
+                unset($collection->employee_name);
+                unset($collection->outstanding);
+            }
+            // dd($collections_closed[0]->shipper);
+            return view('advance_notices.index',compact('collections', 'collections_closed','detail_advance_notices','type'));
+        }
+    }
+
+    /**
+     * Show the form for creating a new resource.
+     *
+     * @return \Illuminate\Http\Response
+     */
+    public function create($type = 'inbound')
+    {
+        if(Auth::user()->hasRole('WarehouseSupervisor') && session()->get('current_project')->id != '337')
+        {
+            Abort(403);
+        }
+        $action = route('advance_notices.store');
+        $method = 'POST';
+        $cities = City::pluck('name', 'id');
+        $projectId = session()->get('current_project')->id;
+
+        $due_date = Carbon::now()->format('Y-m-d'); 
+
+
+        $contracts = Contract::where('project_id', $projectId)
+            ->where('is_active',1)
+            ->where('end_date','>', $due_date)
+            ->get(['id','number_contract','end_date']);
+
+            //return $contracts;
+
+        $transport_types = TransportType::pluck('name', 'id');
+        if($type == 'inbound') {
+            $shippers = Party::whereHas('party_types', function ($query) {
+                $query->where('name','shipper');
+            })->get();
+            $consignees = Party::whereHas('party_types', function ($query) {
+                $query->where('name','branch');
+            })->get();
+            // dd($consignees);
+        } else {
+            $shippers = Party::whereHas('party_types', function ($query) {
+                $query->where('name','branch');
+            })->get();
+            $consignees = Party::whereHas('party_types', function ($query) {
+                $query->where('name','consignee');
+            })->get();
+        }
+        $activities = AdvanceNoticeActivity::pluck('name', 'id');
+        $advanceNotice = new AdvanceNotice;
+        $parties = Party::select(['id', 'name'])->get();
+        $warehouses = [];
+
+        $pic = AdvanceNotice::groupBy('pic')->pluck('pic');
+        
+        return view('advance_notices.create',compact('warehouses', 'contracts', 'action','parties','method','advanceNotice','transport_types','cities','shippers','consignees','activities','type', 'pic'));
+    }
+
+    /**
+     * Store a newly created resource in storage.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\Response
+     */
+    public function store(Request $request)
+    {
+        $validate = [
+            'contract_number' => 'required',
+            'spmp_number' => 'required',
+            'etd' => 'required|date',
+            'eta' => 'required|date',
+            'shipper_address' => 'required',
+            'consignee_address' => 'required',
+            // 'sptb_num' => 'required',
+            // 'sppk_num' => 'required',
+            // 'sppk_doc' => 'required',
+            'type' => 'in:inbound,outbound',
+            // 'annotation' => 'required',
+            // 'contractor' => 'required',
+            // 'head_ds' => 'required',
+            'disclaimer' => 'accepted'
+        ];
+
+        if(request('type') == 'outbound') {
+            $validate['warehouse_id'] = 'required';
+        }
+
+        $request->validate($validate);
+
+        $model = new AdvanceNotice;
+
+        if($request->hasFile('an_doc') && $request->get('type') == 'inbound') {
+            $model->an_doc = $request->an_doc->store('ain_po', 'public');
+        }
+        elseif($request->hasFile('an_doc') && $request->get('type') == 'outbound') {
+            $model->an_doc = $request->an_doc->store('aon_do', 'public');
+        }
+
+        $model->type = $request->get('type');
+        $model->advance_notice_activity_id = $request->get('advance_notice_activity_id');
+        $model->transport_type_id = $request->get('transport_type_id');
+        /**
+         * NEW
+         */
+        //$model->sptb_num = $request->get('sptb_num');
+        $model->sptb_num = null;
+        $model->sppk_num = $request->get('sppk_num');
+        // $model->sppk_doc = $request->sppk_doc->store('doc', 'public');
+
+        $model->etd = $request->get('etd');
+        $model->eta = $request->get('eta');
+        $model->origin_id = $request->get('origin_id');
+        $model->destination_id = $request->get('destination_id');
+        $model->ref_code = $request->get('ref_code');
+        $model->shipper_id = $request->get('shipper_id');
+        $model->shipper_address = $request->get('shipper_address');
+        $model->consignee_id = $request->get('consignee_id');
+        $model->consignee_address = $request->get('consignee_address');
+        $model->contract_number = Contract::find($request->get('contract_number'))->number_contract;
+        $model->spmp_number = $request->get('spmp_number');
+        if(Auth::user()->hasRole('CargoOwner')) {
+            $model->user_id = Auth::user()->id;
+        } else{
+            $cargoOwner = RoleUser::join('users', 'users.id', 'role_user.user_id')
+            ->where('role_user.role_id', 3)
+            ->where('branch_id', Auth::user()->branch_id)
+            ->select('role_user.user_id')
+            ->first();
+            // dd($cargoOwner);
+            if($cargoOwner) {
+                // dd(Auth::user()->Warehouse[0]['id']);
+                $model->user_id = $cargoOwner->user_id; 
+                $model->warehouse_id = Auth::user()->Warehouse[0]['id'];
+                $model->employee_name = Auth::user()->first_name.' '.Auth::user()->last_name;
+                $model->is_accepted = 3;
+                $model->save();
+            } else {
+                return redirect()->back()->with('error','Cargo Owner tidak ditemukan');
+            }
+        }
+        $model->project_id = session()->get('current_project')->id;
+        $model->is_seen = 0;
+        // if(Auth::user()->hasRole('CargoOwner')) {
+        $model->status = "Processed";
+        $model->is_accepted = 3;
+        // }
+        $model->pic = $request->pic;
+        $model->owner = $request->owner;
+
+        
+        if(request('type') == 'outbound') {
+            $model->warehouse_id = request('warehouse_id');
+        } else {
+            if(Auth::user()->hasRole('CargoOwner')) {
+                $model->warehouse_id = NULL;
+            }
+        }
+
+        /**
+         * NEW BULOG
+         */
+        // $model->annotation              = $request->get('annotation');
+        // $model->contractor              = $request->get('contractor');
+        // $model->head_ds                 = $request->get('head_ds');
+        $model->save();
+
+        
+        //Generate doc code
+        $user_company_id = sprintf("%04d", session()->get('current_project')->id);
+        $model_code = $model->getDocCode($request->get('type'));
+        $year_month = Carbon::now()->format('ym');
+        $doc_id = sprintf("%04d", $model->id);
+        $doc_code = $user_company_id.'.'.$model_code.'.'.$year_month.'.'.$doc_id;
+        $model->code = $doc_code;
+        $model->save();
+
+        if($model->type == 'inbound'){
+            $sub_type = 'ain';
+        }
+        else{
+            $sub_type = 'aon';
+        }
+
+        //create data log
+        // $data_log = array(
+        //     'user_id' => $model->user_id,
+        //     'type' => $model->type,
+        //     'sub_type' => $sub_type,
+        //     'record_id' => $model->id,
+        //     'status' => 'start',
+        // );
+
+        // $input = array_except($data_log, '_token');
+        // $DataLog = DataLog::create($input);
+        
+        // Sent Mail Inbound SPBM to Warehouse Supervisor        
+        // $projectUsers = Project::find(session()->get('current_project')->id)->users;
+        // foreach ($projectUsers as $projectUser) {
+        //     if ($projectUser->hasRole('WarehouseSupervisor')) {
+        //         if ($request->get('type') == 'inbound') {
+        //             Mail::to($projectUser->email)->queue(new InboundSPBM());
+        //         }else{
+        //             Mail::to($projectUser->email)->queue(new OutboundSPBK());
+        //         }
+        //     }
+        // }
+
+        try {
+            activity()
+                ->performedOn($model)
+                ->causedBy(Auth::user())
+                ->withProperties($model)
+                ->log('Planning ' . ($request->get('type') == 'inbound' ? 'AIN' : 'AON') );
+        } catch (\Exception $e) {
+            
+        }
+        return redirect('advance_notices/'.$model->id.'/edit')->with('success', 'Data berhasil disimpan');
+    }
+
+    /**
+     * Display the specified resource.
+     *
+     * @param  \App\AdvanceNotice  $advanceNotice
+     * @return \Illuminate\Http\Response
+     */
+    public function show(AdvanceNotice $advanceNotice)
+    {
+        if(Auth::user()->last_name){
+            if(Auth::user()->hasRole('WarehouseSupervisor') && $advanceNotice->employee_name == Auth::user()->first_name.' '.Auth::user()->last_name){
+                $model = $advanceNotice;
+                $model->is_seen = 1;
+                $model->save();
+            }
+        }
+        else{
+            if(Auth::user()->hasRole('WarehouseSupervisor') && $advanceNotice->employee_name == Auth::user()->first_name){
+                $model = $advanceNotice;
+                $model->is_seen = 1;
+                $model->save();
+            }
+        }
+        
+        
+        
+        $project = Project::findOrFail($advanceNotice->project->id);
+        $user_projects = Auth::user()->projects;
+        if($user_projects->contains('id',$advanceNotice->project->id)) {
+            session(['projects'=>Auth::user()->projects]);
+            session(['current_project'=>$project]);
+            // dd(session()->get('current_project')->name);
+        } 
+
+        //warehouse yg akan keluar nanti berdasar divre penerima
+        if($advanceNotice->type == 'inbound'){
+            $party = Party::find($advanceNotice->consignee_id);
+        }
+        
+        //warehouse yg akan keluar nanti berdasar divre pengirim
+        else{
+            $party = Party::find($advanceNotice->shipper_id);
+        }
+
+        //QUESTION
+        if($party) {
+            //warehouse akan keluar jika warehouse tersebut mempunyai storage
+            $warehouses = Storage::join('warehouses as w', 'w.id', '=', 'storages.warehouse_id')
+                ->join('contract_warehouse', 'contract_warehouse.warehouse_id', 'w.id')
+                ->join('contracts', 'contracts.id', 'contract_warehouse.contract_id')
+                ->where('contracts.end_date', '>=', now()->format('Y-m-d'))
+                ->where('w.branch_id', $party->id);
+                // ->where('w.region_id', $party->region_id);
+                
+            if($advanceNotice->type == 'inbound') {
+                $warehouses = $warehouses->where('contracts.project_id', session()->get('current_project')->id);
+            }
+
+            $warehouses = $warehouses->groupBy('w.id')->get([
+                    'w.id',
+                    'w.name',
+                    'w.code',
+                ]);
+        } else {
+            //warehouse akan keluar jika warehouse tersebut mempunyai storage
+            $warehouses = Storage::join('warehouses as w', 'w.id', '=', 'storages.warehouse_id')
+                ->groupBy('w.id')
+                ->get([
+                    'w.id',
+                    'w.name',
+                    'w.code',
+                ]);
+        }
+
+        return view('advance_notices.view', compact('advanceNotice','warehouses'));
+    }
+
+    public function print_sptb(AdvanceNotice $advanceNotice)
+    {
+        return view('advance_notices.print_sptb', compact('advanceNotice'));
+    }
+
+    public function print_unloading(AdvanceNotice  $advanceNotice)
+    {
+        return view('advance_notices.print_unloading', compact('advanceNotice'));
+    }
+
+    public function print_ba(AdvanceNotice $advanceNotice)
+    {
+        //return $advanceNotice->details;
+        foreach($advanceNotice->details as $detail){
+            $inbound = AdvanceNoticeDetail::join('stock_advance_notices as san', 'san.id', '=', 'stock_advance_notice_details.stock_advance_notice_id')
+            ->where('san.status', 'Closed')
+            ->where([
+                'stock_advance_notice_details.item_id' => $detail->item_id,
+                'stock_advance_notice_details.ref_code' => $detail->ref_code,
+                'san.id' => $detail->stock_advance_notice_id,
+            ])
+            ->sum('stock_advance_notice_details.qty');
+
+            if($advanceNotice->type == 'inbound'){
+                $outbound_completed = StockTransportDetail::join('stock_transports as st', 'st.id', '=', 'stock_transport_details.stock_transport_id')
+                ->where('st.status', 'Completed')
+                ->where([
+                    'stock_transport_details.item_id' => $detail->item_id,
+                    'stock_transport_details.ref_code' => $detail->ref_code,
+                    'st.advance_notice_id' => $detail->stock_advance_notice_id
+                ])
+                ->sum('stock_transport_details.qty');
+            
+            }
+            //ketika dp, data plan adalah actual
+            else{
+                $outbound_completed = StockTransportDetail::join('stock_transports as st', 'st.id', '=', 'stock_transport_details.stock_transport_id')
+                ->where('st.status', 'Completed')
+                ->where([
+                    'stock_transport_details.item_id' => $detail->item_id,
+                    'stock_transport_details.ref_code' => $detail->ref_code,
+                    'st.advance_notice_id' => $detail->stock_advance_notice_id
+                ])
+                ->sum('stock_transport_details.plan_qty');
+            }
+
+
+            $outbound_incompleted = StockTransportDetail::join('stock_transports as st', 'st.id', '=', 'stock_transport_details.stock_transport_id')
+                ->where('st.status', 'Processed')
+                ->where([
+                    'stock_transport_details.item_id' => $detail->item_id,
+                    'stock_transport_details.ref_code' => $detail->ref_code,
+                    'st.advance_notice_id' => $detail->stock_advance_notice_id
+                ])
+                ->sum('stock_transport_details.plan_qty');
+
+                //return $stockTransport->advance_notice_id;
+
+            $detail->outstanding = $inbound - ($outbound_completed + $outbound_incompleted);
+
+        }
+
+        
+        return view('advance_notices.print_ba', compact('advanceNotice'));
+    }
+
+    /**
+     * Show the form for editing the specified resource.
+     *
+     * @param  \App\AdvanceNotice  $advanceNotice
+     * @return \Illuminate\Http\Response
+     */
+    public function edit(AdvanceNotice $advanceNotice)
+    {
+        // Check if owner
+        if(Auth::user()->id == $advanceNotice->user_id || (Auth::user()->hasRole('WarehouseSupervisor') && session()->get('current_project')->id == '337')) {
+            $parties = Party::select(['id', 'name'])->get();
+            
+            $action = route('advance_notices.update', $advanceNotice->id);
+            $method = 'PUT';
+            $cities = City::pluck('name', 'id');
+            $transport_types = TransportType::pluck('name', 'id');
+            $projectId = session()->get('current_project')->id;
+
+            $total_qty_items = $advanceNotice->details->sum('qty');
+
+            $due_date = Carbon::now()->format('Y-m-d'); 
+
+
+            $contracts = Contract::where('project_id', $projectId)
+                ->where('is_active',1)
+                ->where('end_date','>', $due_date)
+                ->get(['id','number_contract','end_date']);
+                
+            if($advanceNotice->type == 'inbound') {
+                $shippers = Party::whereHas('party_types', function ($query) {
+                    $query->where('name','shipper');
+                })->get();
+                $consignees = Party::whereHas('party_types', function ($query) {
+                    $query->where('name','branch');
+                })->get();
+            } else {
+                $shippers = Party::whereHas('party_types', function ($query) {
+                    $query->where('name','branch');
+                })->get();
+                $consignees = Party::whereHas('party_types', function ($query) {
+                    $query->where('name','consignee');
+                })->get();
+            }
+            $activities = AdvanceNoticeActivity::pluck('name', 'id');
+            $type = $advanceNotice->type;
+
+            $warehouses = Warehouse::all();
+            $pic = AdvanceNotice::groupBy('pic')->pluck('pic');
+
+            return view('advance_notices.edit',compact('contracts', 'action','method','advanceNotice','transport_types','cities','shippers','consignees','activities','type','total_qty_items', 'warehouses', 'parties', 'pic'));
+        } else {
+            return redirect()->back()->with('error','Tidak mempunyai akses');
+        }
+    }
+
+    /**
+     * Update the specified resource in storage.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @param  \App\AdvanceNotice  $advanceNotice
+     * @return \Illuminate\Http\Response
+     */
+    public function update(Request $request, AdvanceNotice $advanceNotice)
+    {
+        // Check if owner
+        if(Auth::user()->id == $advanceNotice->user_id) {
+            //Validate
+            $request->validate([
+                'contract_number' => 'required',
+                'spmp_number' => 'required',
+                // 'sptb_num' => 'required',
+                // 'sppk_num' => 'required',
+                // 'sppk_doc' => 'required',
+                'etd' => 'required|date',
+                'eta' => 'required|date',
+                'shipper_address' => 'required',
+                'consignee_address' => 'required',
+                'type' => 'in:inbound,outbound',
+                // 'annotation' => 'required',
+                // 'contractor' => 'required',
+                // 'head_ds' => 'required',
+                'disclaimer' => 'accepted'
+            ]);
+
+            // Note ketika edit, field type, user, code tidak perlu di update
+            $model = $advanceNotice;
+
+            if($request->hasFile('an_doc') && $request->get('type') == 'inbound') {
+                $model->an_doc = $request->an_doc->store('ain_po', 'public');
+            }
+            elseif($request->hasFile('an_doc') && $request->get('type') == 'outbound') {
+                $model->an_doc = $request->an_doc->store('aon_do', 'public');
+            }
+            
+            $model->advance_notice_activity_id = $request->get('advance_notice_activity_id');
+            $model->transport_type_id = $request->get('transport_type_id');
+            $model->etd = $request->get('etd');
+            $model->eta = $request->get('eta');
+            $model->origin_id = $request->get('origin_id');
+            $model->destination_id = $request->get('destination_id');
+            $model->ref_code = $request->get('ref_code');
+            $model->shipper_id = $request->get('shipper_id');
+            $model->shipper_address = $request->get('shipper_address');
+            // if ($request->get('type') == 'inbound') {
+            $model->consignee_id = $request->get('consignee_id');
+            $model->consignee_address = $request->get('consignee_address');
+            // }
+            /**
+             * NEW BULOG
+             */
+            // $model->annotation              = $request->get('annotation');
+            // $model->contractor              = $request->get('contractor');
+            // $model->head_ds                 = $request->get('head_ds');
+            $model->save();
+            // $projectUsers = Project::find(session()->get('current_project')->id)->users;
+            // foreach ($projectUsers as $projectUser) {
+            //     if ($projectUser->hasRole('WarehouseSupervisor')) {
+            //         if ($request->get('type') == 'inbound') {
+            //             Mail::to($projectUser->email)->queue(new InboundSPBMEdit());
+            //         }else{
+            //             Mail::to($projectUser->email)->queue(new OutboundSPBKEdit());
+            //         }
+            //     }
+            // }
+
+            try {
+                activity()
+                    ->performedOn($model)
+                    ->causedBy(Auth::user())
+                    ->withProperties($model)
+                    ->log('Update ' . ($advanceNotice->type == 'inbound' ? 'AIN' : 'AON') );
+            } catch (\Exception $e) {
+                
+            }
+            
+            return redirect('advance_notices/'.$model->id.'/edit')->with('success', 'Data berhasil disimpan');
+        } else {
+            return redirect()->back()->with('error','Tidak mempunyai akses');
+        }
+    }
+
+    /**
+     * Remove the specified resource from storage.
+     *
+     * @param  \App\AdvanceNotice  $advanceNotice
+     * @return \Illuminate\Http\Response
+     */
+    public function destroy(AdvanceNotice $advanceNotice)
+    {
+        // Check if owner
+
+        if(Auth::user()->id == $advanceNotice->user_id || (Auth::user()->hasRole('WarehouseSupervisor') && session()->get('current_project')->id == '337')) {
+            $type = $advanceNotice->type;
+            //Processed
+            //Completed
+            //kembalikan sisa outstanding
+            if($type == 'outbound'){
+                foreach($advanceNotice->details as $detail){
+
+                    if($advanceNotice->status == 'Processed'){
+                        $inbound = AdvanceNoticeDetail::join('stock_advance_notices as san', 'san.id', '=', 'stock_advance_notice_details.stock_advance_notice_id')
+                        ->where([
+                            'stock_advance_notice_details.item_id' => $detail->item_id,
+                            'stock_advance_notice_details.ref_code' => $detail->ref_code,
+                            'san.id' => $advanceNotice->id,
+                        ])
+                        ->sum('stock_advance_notice_details.qty');
+                    }
+                } 
+            }
+            
+            $advanceNotice->details()->delete();
+            $advanceNotice->delete();
+
+            try {
+                activity()
+                    ->performedOn($advanceNotice)
+                    ->causedBy(Auth::user())
+                    ->withProperties($advanceNotice)
+                    ->log('Delete ' . ($type == 'inbound' ? 'AIN' : 'AON') );
+            } catch (\Exception $e) {
+                
+            }
+
+            return redirect('advance_notices/'.$type)->with('success','Data berhasil dihapus');
+        } else {
+            return redirect()->back()->with('error','Tidak mempunyai akses');
+        }
+    }
+    
+    public function completed(AdvanceNotice $advanceNotice, Request $request) {
+        
+        if(Auth::user()->hasRole('WarehouseSupervisor') && session()->get('current_project')->id != '337') {
+            if(Auth::user()->id != $advanceNotice->user_id) {
+                abort(403);
+            }
+        }
+        
+        $request->validate([
+            'password' => 'required|string',
+        ]);
+
+        $hasher = app('hash');
+        if (!$hasher->check($request->input('password'), Auth::user()->password)) {
+            return redirect()->back()->with('error','Password salah');
+        }
+        $advanceNotice->status = 'Completed';
+        $advanceNotice->is_accepted = 3;
+        $advanceNotice->save();
+        
+        if($advanceNotice->type == 'inbound') {
+            $user_id =  $advanceNotice->consignee->user->pluck('id'); 
+        } else {
+            $user_id =  $advanceNotice->shipper->user->pluck('id'); 
+        }
+
+        $users = User::whereIn('id', $user_id)->get();
+
+        foreach($users as $user) {
+            if($user->hasRole('WarehouseManager')) {
+                $sendNotifications[] = $user;
+            }
+        }
+        
+        $emails = collect($sendNotifications);
+
+        if($emails->count()) {
+            // InboundOutbondJob::dispatch($advanceNotice, $emails->pluck('email')->toArray(), auth()->user())->delay(now()->addSeconds(3));
+        }
+
+        try {
+            activity()
+                ->performedOn($advanceNotice)
+                ->causedBy(Auth::user())
+                ->withProperties($advanceNotice)
+                ->log('Completed ' . ($advanceNotice->type == 'inbound' ? 'AIN' : 'AON') );
+        } catch (\Exception $e) {
+            
+        }
+
+        //create data log
+        
+
+        if($advanceNotice->type == 'inbound'){
+            $sub_type = 'ain';
+        }
+        else{
+            $sub_type = 'aon';
+        }
+
+        //create data log
+        // $data_log = array(
+        //     'user_id' => Auth::user()->id,
+        //     'type' => $advanceNotice->type,
+        //     'sub_type' => $sub_type,
+        //     'record_id' => $advanceNotice->id,
+        //     'status' => 'completed',
+        // );
+
+        // $input = array_except($data_log, '_token');
+        // $DataLog = DataLog::create($input);
+
+        return redirect()->back()->with('success','Successfully completed');
+    }
+    
+    public function closed(AdvanceNotice $advanceNotice, Request $request) {
+        $request->validate([
+            'password' => 'required|string',
+            'annotation' => 'required|min:5'
+        ]);
+
+        $hasher = app('hash');
+        if (!$hasher->check($request->input('password'), Auth::user()->password)) {
+            return redirect()->back()->with('error','Password salah');
+        }
+
+        $request->merge(['ain_aon_id' => $advanceNotice->id]);
+
+        $request->validate([
+            'ain_aon_id' => [new AinAonClosingRule()]
+        ]);
+            
+        $type = $advanceNotice->type;
+        
+        if($type == 'outbound') {
+            $detail_advance_notices = AdvanceNoticeDetail::where('stock_advance_notice_id',$advanceNotice->id)->get();
+            
+            foreach($detail_advance_notices as $detail){
+
+                $inbound = AdvanceNoticeDetail::join('stock_advance_notices as san', 'san.id', '=', 'stock_advance_notice_details.stock_advance_notice_id')
+                ->where([
+                    'stock_advance_notice_details.item_id' => $detail->item_id,
+                    'stock_advance_notice_details.ref_code' => $detail->ref_code,
+                    'san.id' => $advanceNotice->id,
+                ])
+                ->sum('stock_advance_notice_details.qty');
+
+
+                $outbound = StockTransportDetail::join('stock_transports as st', 'st.id', '=', 'stock_transport_details.stock_transport_id')
+                ->where('st.status', 'Completed')
+                ->where([
+                    'stock_transport_details.item_id' => $detail->item_id,
+                    'stock_transport_details.ref_code' => $detail->ref_code,
+                    'st.advance_notice_id' => $advanceNotice->id
+                ])
+                ->sum('stock_transport_details.plan_qty');
+
+                    //return $stockTransport->advance_notice_id;
+
+                $detail->detail_outstanding = $inbound - $outbound;
+                $detail->warehouse_id = $advanceNotice->warehouse_id;
+
+
+            }
+
+            // foreach($detail_advance_notices as $dan) { 
+            //     $res = StockAllocationIO::where('item_id', $dan->item_id)
+            //         ->where('ref_code', $dan->ref_code)
+            //         ->where('warehouse_id', $dan->warehouse_id)
+            //         ->where('project_id', $advanceNotice->project_id)
+            //         ->get()
+            //         ->first();
+            //     //YOGA
+            //     $res->allocated -= $dan->detail_outstanding;
+            //     $res->available += $dan->detail_outstanding;
+            //     $res->save();
+            // }
+        }
+
+        $advanceNotice->status = 'Closed';
+        $advanceNotice->annotation = $request->get('annotation');
+        $advanceNotice->save();
+
+        $user_id =  $advanceNotice->branch->user->pluck('id'); 
+
+        $users = User::whereIn('id', $user_id)->get();
+        $sendNotifications[] = $advanceNotice->user;
+
+        foreach($users as $user) {
+            if($user->hasRole('WarehouseManager')) {
+                $sendNotifications[] = $user;
+            }
+        }
+
+        $emails = collect($sendNotifications);
+        
+        if($emails->count()) {
+            // $res = Mail::to($emails->first()->email)
+            //         ->cc($emails->pluck('email'))
+            //         ->queue(new AinAonClosed($advanceNotice));
+            $res = 0;
+        }
+    
+
+        try {
+            activity()
+                ->performedOn($advanceNotice)
+                ->causedBy(Auth::user())
+                ->withProperties($advanceNotice)
+                ->log('Closed ' . ($advanceNotice->type == 'inbound' ? 'AIN' : 'AON') );
+        } catch (\Exception $e) {
+            
+        }
+        return redirect()->back()->with('success','Successfully closed');
+    }
+
+    public function getJson($id) {
+        $advanceNotice = AdvanceNotice::findOrFail($id);
+
+        if($advanceNotice->transport_type){
+            $advanceNotice->transport_type_name = $advanceNotice->transport_type->name;
+        }
+        else{
+            $advanceNotice->transport_type_name = null;
+        }
+
+        if($advanceNotice->warehouse){
+            $advanceNotice->warehouse_name = $advanceNotice->warehouse->name;        
+        }
+        else{
+            $advanceNotice->warehouse_name = null;        
+        }
+
+        $advanceNotice->warehouseOfficers = Warehouse::join('warehouse_officer as wo', 'wo.warehouse_id', '=', 'warehouses.id')
+            ->join('users as u', 'u.id', '=', 'wo.user_id')
+            ->join('role_user as ru','ru.user_id', '=', 'u.id')
+            ->join('roles as r','r.id','=', 'ru.role_id')
+            ->where('r.id','=', 5)
+            ->where('warehouses.id','=', $advanceNotice->warehouse->id)
+            ->get(['u.first_name','u.user_id']);
+        
+        
+        return response()->json($advanceNotice);
+    }
+
+    public function getDataSpk($contract_id) {
+        $spks = Contract::find($contract_id)->spks;
+        return $spks;
+    }
+
+    public function validation(AdvanceNotice $advanceNotice, Request $request) {
+        $advanceNotice->is_accepted = $request->get('is_accepted');
+        $advanceNotice->accepted_note = $request->get('accepted_note');
+        $advanceNotice->save();
+
+        if($advanceNotice->is_accepted == 1){
+            
+            return redirect()->back()->with('success','Data diterima');
+        }
+        else{
+            $advanceNotice->status = "Processed";
+            $advanceNotice->save();
+
+            //kirim email ke cargo jika transaksi ditolak
+            // Mail::to($advanceNotice->user->email)->queue(new AnReject($advanceNotice));
+
+            return redirect('advance_notices/'.$advanceNotice->type)->with('success','Data ditolak');
+        }
+
+        
+        
+    }
+
+    public function assignTo(AdvanceNotice $advanceNotice, Request $request) {
+        $advanceNotice->warehouse_id = $request->get('warehouse_id');
+        $advanceNotice->employee_name = $request->get('employee_name');
+        $advanceNotice->save();
+        // $wh = Warehouse::find($request->get('warehouse_id'));
+        $u = User::find($request->get('employee_id'));
+
+        // InboundOutbondJob::dispatch($advanceNotice, $u, auth()->user())->delay(now()->addSeconds(3));
+
+        return redirect()->back()->with('success','Data berhasil disimpan');
+    }
+
+    public function get_warehouse_officer(Request $request){
+        $warehouse_id = $request->input('warehouse_id'); 
+        $projectId = session()->get('current_project')->id;
+
+        //return $projectId;
+
+        if (isset($warehouse_id)) {
+            
+            $warehouse = Warehouse::find($warehouse_id);
+            $warehouse_officer = WarehouseOfficer::with('user')->where('warehouse_id' ,$warehouse->id)->get();
+
+            foreach ($warehouse_officer as $key => $item) {
+                // kalau petugas gudang bukan supervisor, jangan ditampilkan
+
+                $project_officers = AssignedTo::where('user_id', $item->user_id)->where('project_id', $projectId)->get();
+
+                if(!$item->user->hasRole('WarehouseSupervisor')) {
+                    $warehouse_officer->forget($key);
+                }
+                if($item->user->hasRole('WarehouseSupervisor') && $project_officers->count() == 0) {
+                    $warehouse_officer->forget($key);
+                }
+            }
+            
+            return view('advance_notices.select_warehouse_officer', compact('warehouse','warehouse_officer'));
+        }       
+    }
+
+    public function to_storage_list($type){
+        //satu user hanya bisa di satu gudang (logicnya blm bisa dibikin)
+        $warehouseId = WarehouseOfficer::join('users', 'warehouse_officer.user_id','=','users.id')
+                        ->where('users.id', Auth::user()->id)->pluck('warehouse_officer.warehouse_id')->first();
+
+        $projectId = session()->get('current_project')->id;
+
+        $storages = Storage::join('storage_projects', 'storages.id', '=', 'storage_projects.storage_id')
+                        ->where('storage_projects.project_id', $projectId)
+                        ->where('storages.warehouse_id', $warehouseId)
+                        //->where('storages.status', 0)
+                        ->get(['storages.code', 'storages.id','storages.warehouse_id','storage_projects.project_id','storages.status']);
+
+        return view('advance_notices.storage_list',compact('storages','type'));
+
+    }
+
+    public function change_storage_status(Request $request)
+    {
+        $storage = Storage::find($request->input('storage_id'));
+        $status = $request->input('status');
+        $status_name = '';
+        if($status == 1){
+            $status_name = 'buka';
+        }
+        else{
+            $status_name = 'tutup';
+        }
+        $type = $request->input('type');
+
+        $storage->status = $status;
+        $storage->save();
+
+        return redirect()->route('to_storage_list', $type)->with('success', 'Storage berhasil di'.$status_name);
+    }
+
+    public function toggleIsArrived(Request $request, $aon_id)
+    {
+        $advanceNotice = AdvanceNotice::find($aon_id);
+        $advanceNotice->is_arrived = !$advanceNotice->is_arrived;
+        $advanceNotice->save();
+
+        $status = 'sudah tiba';
+
+        if($advanceNotice->is_arrived == false) {
+            $status = 'belum tiba';
+        }
+
+        return redirect()->route('advance_notices.index',[$advanceNotice->type])->with('success','Berhasil ubah status menjadi ' . $status);            
+    }
+
+}

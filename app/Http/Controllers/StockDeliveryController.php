@@ -1,0 +1,646 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\StockDelivery;
+use App\StockDeliveryDetail;
+use App\StockEntry;
+use App\StockEntryDetail;
+use App\AdvanceNoticeDetail;
+use App\City;
+use App\TransportType;
+use App\Party;
+use App\DataLog;
+use App\PartyType;
+use App\User;
+use Auth;
+use Carbon;
+use Response;
+use App\Company;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Input;
+use Illuminate\Support\Facades\Mail;
+use App\Mail\DeliveryNoteCreated;
+use App\Mail\GICompleted;
+use App\Role;
+use Maatwebsite\Excel\Facades\Excel;
+use App\Exports\StockDeliveryDetailExport;
+
+class StockDeliveryController extends Controller
+{
+    
+    public function __construct()
+    {
+        $this->middleware(function ($request, $next) {
+            $user = Auth::user();
+            if ( $user->hasRole('Superadmin') ) {
+            }
+            if ( $user->hasRole('Admin') || $user->hasRole('Admin-BGR') || $user->hasRole('Admin-Client') ) {
+                if (empty(session()->get('current_project'))) {
+                    return redirect('empty-project');
+                }
+            }else if (empty(session()->get('current_project'))) {
+                return redirect('empty-project');
+            }
+
+            return $next($request);
+        });
+       /*   */
+    }
+    /**
+     * Display a listing of the resource.
+     *
+     * @return \Illuminate\Http\Response
+     */
+    public function index($type = 'inbound', Request $request)
+    {
+        $userId         = Auth::user()->id;
+        $role           = DB::table('role_user')
+                            ->where('role_user.user_id','=',$userId)
+                            ->join('roles', 'role_user.role_id', '=', 'roles.id')
+                            ->select('roles.id as roleId')
+                            ->first();
+        $collections    = StockDelivery::where('type',$type)
+                            ->where('project_id', session()->get('current_project')->id)
+                            ->where('status', '<>', 'Closed')             
+                            ->orderBy('id', 'desc');
+			    //->limit(10)
+			//->get();
+	//dd($collections->get());
+        // 1. Kalau ada data cabang, filter datanya
+        if(Auth::user()->branch && !Auth::user()->hasRole('CargoOwner')) {
+            // 1. Kalau inbound, keluarkan data dimana consignee equals to user branch data
+            if($type == 'inbound') {
+		$collections->where('consignee_id', Auth::user()->branch->id);
+            /*    $collections = $collections->filter(function ($item) {
+                    return $item->consignee_id == Auth::user()->branch->id;
+                });*/
+            } else {
+		$collections->where('shipper_id', Auth::user()->branch->id);
+		//dd($collections->get());
+                // 2. Kalau outbound, keluarkan data dimana shipper equals to user branch data
+                /*$collections = $collections->filter(function ($item) {
+                    return $item->shipper_id == Auth::user()->branch->id;
+                });*/
+            }
+
+            // 2. Kalau yg login WH supervisor, di filter lg datanya berdasarkan yang di assign ke dia saja
+            if(Auth::user()->hasRole('WarehouseSupervisor')) {
+		$collections->where('user_id', Auth::user()->id);
+                /*$collections = $collections->filter(function ($item) {
+                    return $item->user_id == Auth::user()->id;
+                });*/
+		//dd($collections->get());
+            }
+        }
+	
+    $collections = $collections->limit(1000)->get();
+    // dd(count($collections));
+     //return response()->json($collections, $type, $userId, $role);
+     if($request->submit) {
+        return Excel::download(new StockDeliveryDetailExport, 'List Outbound-'.Carbon::now()->format('d-m-y').'.xlsx');
+     }else {
+         return view('stock_deliveries.index',compact('collections','type', 'userId', 'role'));
+     }
+        // return view('stock_deliveries.index',compact('collections','type', 'userId', 'role'));
+    }
+
+    /**
+     * Show the form for creating a new resource.
+     *
+     * @return \Illuminate\Http\Response
+     */
+    public function create($type = 'inbound')
+    {
+        $action = route('stock_deliveries.store');
+        $method = 'POST';
+        $cities = City::pluck('name','id');
+        $transport_types = TransportType::pluck('name','id');
+        $projectId = session()->get('current_project')->id;
+
+        // Ambil data ID stock transport yang sudah dibuatkan stock entry nya
+        $collections = StockDelivery::where('type',$type)
+                        ->where('user_id', Auth::user()->id)
+                        ->where('project_id', $projectId)
+                        ->orderBy('id', 'desc')
+                        ->get(['stock_entry_id']);
+
+        $filterData = [];
+        foreach ($collections as $collection) {
+            array_push($filterData, intval($collection->stock_entry_id));
+        }
+        $stock_entries = StockEntry::where('stock_entries.type',$type)
+                        ->join('stock_transports', 'stock_transports.id', 'stock_entries.stock_transport_id')
+                        ->join('stock_advance_notices', 'stock_advance_notices.id', 'stock_transports.advance_notice_id')
+                        ->where('stock_entries.project_id', $projectId)
+                        ->where('stock_entries.user_id', Auth::user()->id)
+                        ->where('advance_notice_activity_id','<>', 20)
+                        //->where('warehouse_id', session()->get('warehouse_id'))
+                        ->whereNotIn('stock_entries.id', $filterData)
+                        ->where('stock_entries.status', 'Completed')
+                        ->orderBy('stock_entries.id', 'desc')
+                        ->pluck('stock_entries.code','stock_entries.id');
+
+        if($type == 'inbound') {
+            $shippers = Party::whereHas('party_types', function ($query) {
+                $query->where('name','shipper');
+            })->get();
+            $consignees = Party::whereHas('party_types', function ($query) {
+                $query->orWhereIn('name',['branch']);
+            })->get();
+        } else {
+            $shippers = Party::whereHas('party_types', function ($query) {
+                $query->orWhereIn('name',['branch']);
+            })->get();
+            $consignees = Party::whereHas('party_types', function ($query) {
+                $query->where('name','consignee');
+            })->get();
+        }
+        if($branch = Auth::user()->branch) {
+            $warehouseOfficers = User::join('role_user as ru','ru.user_id', '=', 'users.id')
+                            ->join('roles as r','r.id','=', 'ru.role_id')
+                            ->where('r.id','=', 5)
+                            ->where('users.branch_id', '=', $branch->id)
+                            ->get(['users.id','users.first_name', 'users.last_name','users.user_id']);
+        } else {
+            $warehouseOfficers = User::join('role_user as ru','ru.user_id', '=', 'users.id')
+                                ->join('roles as r','r.id','=', 'ru.role_id')
+                                ->where('r.id','=', 5)
+                                ->get(['users.id','users.first_name', 'users.last_name','users.user_id']);
+        }
+
+        $stockDelivery = new StockDelivery;
+        return view('stock_deliveries.create',compact('warehouseOfficers','action','method','stockDelivery','transport_types','stock_entries','cities','shippers','consignees','type'));
+    }
+
+    /**
+     * Store a newly created resource in storage.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\Response
+     */
+    public function store(Request $request)
+    {
+        //Validate
+        $request->validate([
+            // 'etd' => 'required|date',
+            // 'eta' => 'required|date',
+            'pickup_order' => 'required',
+            'type' => 'in:inbound,outbound',
+            'total_collie' => 'nullable|numeric',
+            'total_weight' => 'nullable|numeric',
+            'total_volume' => 'nullable|numeric',
+            'transport_type_id' => 'required',
+            'driver_phone'      => 'nullable|alpha_num|min:7',
+            'police_number'     => 'nullable|alpha_num|max:9',
+            'employee_name' => 'required',
+        ]);
+
+        $check_stock_entries = StockDelivery::where('stock_entry_id',$request->get('stock_entry_id'))
+                        ->get();
+
+        if($check_stock_entries->count()>0){
+            return redirect()->back()->with('error','dokumen referensi sudah pernah dibuat.');
+        }
+        $sti = StockEntry::findOrFail($request->get('stock_entry_id'));
+
+        $model                          = new StockDelivery;
+        $model->type                    = $request->get('type');
+        $model->stock_entry_id          = $request->get('stock_entry_id');
+        $model->transport_type_id       = $request->get('transport_type_id');
+        $model->pickup_order            = $request->get('pickup_order');
+        $model->etd                     = $request->get('etd');
+        $model->eta                     = $request->get('eta');
+        $model->total_collie            = $request->get('total_collie');
+        $model->total_weight            = $request->get('total_weight');
+        $model->total_volume            = $request->get('total_volume');
+        $model->origin_id               = $request->get('origin_id');
+        $model->destination_id          = $request->get('destination_id');
+        $model->ref_code                = $request->get('ref_code');
+        $model->vehicle_code_num        = $request->get('vehicle_code_num');
+        $model->vehicle_plate_num       = $request->get('vehicle_plate_num');
+        $model->shipper_id              = $request->get('shipper_id');
+        $model->shipper_address         = $request->get('shipper_address');
+        
+        $model->consignee_id        = $sti->stock_transport->advance_notice->consignee_id;
+        $model->consignee_address   = $sti->stock_transport->advance_notice->consignee_address;
+        
+        $model->employee_name           = $request->get('employee_name');
+        $model->status                  = $request->get('status');
+        $model->user_id                 = Auth::user()->id;
+        $model->pic                     = $sti->pic;
+        $model->owner                   = $sti->owner;
+        $model->project_id              = session()->get('current_project')->id;
+        $model->save();
+
+        //Generate doc code
+        $user_company_id = sprintf("%04d", session()->get('current_project')->id);
+        $model_code = $model->getDocCode($request->get('type'));
+        $year_month = Carbon::now()->format('ym');
+        $doc_id = sprintf("%04d", $model->id);
+        // $doc_code = $user_company_id.'.'.$model_code.'.'.$year_month.'.'.$doc_id;
+        $doc_code = $user_company_id.'.GI.'.$year_month.'.'.$doc_id;
+        $model->code = $doc_code;
+        $model->save();
+        
+        $userCreating = StockDelivery::where('stock_deliveries.id', $model->id)
+            ->join('stock_entries as se', 'se.id', '=', 'stock_deliveries.stock_entry_id')
+            ->join('stock_transports as st', 'st.id', '=', 'se.stock_transport_id')
+            ->join('stock_advance_notices as san', 'san.id', '=', 'st.advance_notice_id')
+            ->join('users as u', 'u.id', '=', 'san.user_id')
+            ->first(['u.email']);
+        try{
+            activity()
+                ->performedOn($model)
+                ->causedBy(Auth::user())
+                ->withProperties($model)
+                ->log('Planning ' . $request->get('type') == 'inbound' ? 'Goods Issue' : 'Goods Issue' );
+        } catch (\Exception $e){
+
+        }
+
+        //create data log
+        // $data_log = array(
+        //     'user_id' => Auth::user()->id,
+        //     'type' => $model->type,
+        //     'sub_type' => 'gi',
+        //     'record_id' => $model->id,
+        //     'status' => 'start',
+        // );
+
+        // $input = array_except($data_log, '_token');
+        // $DataLog = DataLog::create($input);
+            
+        if (!empty($userCreating)) {
+            // Mail::to($userCreating->email)->queue(new DeliveryNoteCreated());
+        }
+        return redirect('/stock_deliveries/copy_details/' . $model->id);
+        return redirect('stock_deliveries/'.$model->id.'/edit')->with('success', 'Data berhasil disimpan');
+    }
+
+    /**
+     * Display the specified resource.
+     *
+     * @param  \App\StockDelivery  $stockDelivery
+     * @return \Illuminate\Http\Response
+     */
+    public function show(StockDelivery $stockDelivery)
+    {
+        $type = $stockDelivery->type;
+        return view('stock_deliveries.view',compact('stockDelivery','transport_types','stock_entries','cities','shippers','consignees','employees','type','companies'));
+    }
+
+    /**
+     * Show the form for editing the specified resource.
+     *
+     * @param  \App\StockDelivery  $stockDelivery
+     * @return \Illuminate\Http\Response
+     */
+    public function edit(StockDelivery $stockDelivery)
+    {
+        if(Auth::user()->id != $stockDelivery->user_id) {
+            abort(403);
+        }
+
+        $type = $stockDelivery->type;
+        $action = route('stock_deliveries.update', $stockDelivery->id);
+        $method = 'PUT';
+        $cities = City::pluck('name','id');
+        $transport_types = TransportType::pluck('name','id');
+        $stock_entries = StockEntry::where('type',$type)
+                    ->where('project_id', session()->get('current_project')->id)
+                    ->orderBy('id', 'desc')
+                    ->where('status', 'Completed')
+                    ->pluck('code','id');
+        if($type == 'inbound') {
+            $shippers = Party::whereHas('party_types', function ($query) {
+                $query->where('name','shipper');
+            })->get();
+            $consignees = Party::whereHas('party_types', function ($query) {
+                $query->orWhereIn('name',['branch']);
+            })->get();
+        } else {
+            $shippers = Party::whereHas('party_types', function ($query) {
+                $query->orWhereIn('name',['branch']);
+            })->get();
+            $consignees = Party::whereHas('party_types', function ($query) {
+                $query->where('name','consignee');
+            })->get();
+        }
+        $employees = Party::whereHas('party_types', function ($query) {
+            $query->where('name','employee');
+        })->get();
+        if($branch = Auth::user()->branch) {
+        $warehouseOfficers = User::join('role_user as ru','ru.user_id', '=', 'users.id')
+                            ->join('roles as r','r.id','=', 'ru.role_id')
+                            ->where('r.id','=', 5)
+                            ->where('users.branch_id', '=', $branch->id)
+                            ->get(['users.first_name', 'users.last_name']);
+        } else {
+            $warehouseOfficers = User::join('role_user as ru','ru.user_id', '=', 'users.id')
+                                ->join('roles as r','r.id','=', 'ru.role_id')
+                                ->where('r.id','=', 5)
+                                ->get(['users.first_name', 'users.last_name']);
+        }
+        //return redirect('/stock_deliveries/copy_details/' . $model->id);
+        return view('stock_deliveries.edit',compact('warehouseOfficers','action','method','stockDelivery','transport_types','stock_entries','cities','shippers','consignees','employees','type'));
+    }
+
+    /**
+     * Update the specified resource in storage.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @param  \App\StockDelivery  $stockDelivery
+     * @return \Illuminate\Http\Response
+     */
+    public function update(Request $request, StockDelivery $stockDelivery)
+    {
+        //Validate
+        if(Auth::user()->id != $stockDelivery->user_id) {
+            abort(403);
+        }
+
+        $request->validate([
+            // 'etd' => 'required|date',
+            // 'eta' => 'required|date',
+            // 'type' => 'in:inbound,outbound',
+            // 'total_collie' => 'nullable|numeric',
+            // 'total_weight' => 'nullable|numeric',
+            // 'total_volume' => 'nullable|numeric',
+            'driver_phone'      => 'nullable|alpha_num|min:7',
+            'police_number'     => 'nullable|alpha_num|max:9',
+        ]);
+
+        // Note ketika update, field type, user, code tidak perlu di update
+        $model = $stockDelivery;
+        // $model->stock_entry_id = $request->get('stock_entry_id');
+        // $model->transport_type_id = $request->get('transport_type_id');
+        // $model->etd = $request->get('etd');
+        // $model->eta = $request->get('eta');
+        // $model->total_collie = $request->get('total_collie');
+        // $model->total_weight = $request->get('total_weight');
+        // $model->total_volume = $request->get('total_volume');
+        // $model->origin_id = $request->get('origin_id');
+        // $model->destination_id = $request->get('destination_id');
+        // $model->ref_code = $request->get('ref_code');
+        // $model->vehicle_code_num = $request->get('vehicle_code_num');
+        // $model->vehicle_plate_num = $request->get('vehicle_plate_num');
+        // $model->shipper_id = $request->get('shipper_id');
+        // $model->shipper_address = $request->get('shipper_address');
+        // // if ($model->type == 'inbound') {
+        //     $model->consignee_id = $request->get('consignee_id');
+        //     $model->consignee_address = $request->get('consignee_address');
+        // // }
+        // // $model->employee_name = $request->get('employee_name');
+        // $model->project_id = session()->get('current_project')->id;
+        // $model->save();
+
+        if($model->type == 'outbound') {
+            $model->do_number = $request->get('do_number');
+            
+            if($request->hasFile('do_attachment')) {
+                $model->do_attachment = $request->do_attachment->store('do_number', 'public');
+            }
+
+            $model->driver_name = $request->get('driver_name');
+            $model->driver_phone = $request->get('driver_phone');
+            $model->sim_number = $request->get('sim_number');
+            $model->wp_number = $request->get('wp_number');
+            $model->police_number = $request->get('police_number');
+            // $model->lhpk_number = $request->get('lhpk_number');
+            // $model->lhpk_issue_date = $request->get('lhpk_issue_date');
+            $model->fleet_arrived = $request->get('fleet_arrived');
+            $model->unloading_start = $request->get('unloading_start');
+            $model->unloading_end = $request->get('unloading_end');
+            if(session()->get('current_project')->id == 337) {
+                $model->type_payment = $request->payment_method;
+                $model->remaining_total = $request->sisa_tagihan;
+            }
+            $model->save();
+        }
+        
+        return redirect('stock_deliveries/'.$model->id.'/edit')->with('success', 'Data berhasil disimpan');
+    }
+
+    /**
+     * Remove the specified resource from storage.
+     *
+     * @param  \App\StockDelivery  $stockDelivery
+     * @return \Illuminate\Http\Response
+     */
+    public function destroy(StockDelivery $stockDelivery)
+    {
+        if(Auth::user()->id != $stockDelivery->user_id) {
+            abort(403);
+        }
+
+        $type = $stockDelivery->type;
+        $stockDelivery->delete();
+        
+        activity()
+            ->performedOn($stockDelivery)
+            ->causedBy(Auth::user())
+            ->withProperties($stockDelivery)
+            ->log('Delete ' . $stockDelivery->type == 'inbound' ? 'Goods Issue' : 'Goods Issue' );
+        return redirect('stock_deliveries/'.$type)->with('success','Data berhasil dihapus');
+    }
+
+    public function autocomplete(){
+
+        $id = Input::get('id');
+
+        $stock_entry = StockEntry::findOrFail($id);
+
+        $results[] = [
+            'id' => $stock_entry->id,
+            'transport_type_id_asd' => $stock_entry->stock_transport->transport_type_id,
+            'company_id' => $stock_entry->company_id,
+            'etd' => $stock_entry->stock_transport->etd,
+            'eta' => $stock_entry->stock_transport->eta,
+            'waybill' => $stock_entry->stock_transport->waybill,
+            'destination' => $stock_entry->stock_transport->destination,
+            'origin' => $stock_entry->stock_transport->origin,
+            'destination' => $stock_entry->stock_transport->destination,
+            'ref_code' => $stock_entry->stock_transport->ref_code,
+            'vehicle_code_num' => $stock_entry->stock_transport->vehicle_code_num,
+            'vehicle_plate_num' => $stock_entry->stock_transport->vehicle_plate_num,
+            'shipper_id' => $stock_entry->stock_transport->shipper_id,
+            'shipper_address' => $stock_entry->stock_transport->shipper_address,
+            'shipper_postal_code' => $stock_entry->stock_transport->shipper_postal_code,
+            'consignee_id' => $stock_entry->stock_transport->consignee_id,
+            'consignee_address' => $stock_entry->stock_transport->consignee_address,
+            'consignee_postal_code' => $stock_entry->stock_transport->consignee_postal_code,
+            'employee_id' => $stock_entry->employee_id,
+        ];
+
+        return Response::json($results);
+    }
+
+    public function copyDetails(StockDelivery $stockDelivery)
+    {
+        $item_details = $stockDelivery->stock_entry->details;
+        if($item_details->count()>0) {
+            foreach ($item_details as $detail) {
+
+                // Check apakah sudah ada existing item di list
+                $stockDeliveryDetail = StockDeliveryDetail::where('stock_delivery_id',$stockDelivery->id)
+                                        ->where('item_id',$detail->item_id)
+                                        ->where('ref_code',$detail->ref_code)
+                                        ->where('control_date',$detail->control_date)
+                                        ->first();
+                if($stockDeliveryDetail) {
+                    $stockDeliveryDetail->qty += $detail->qty;
+                    //tambahan leo weight dan volume di increment jg
+                    $stockDeliveryDetail->weight += $detail->weight;
+                    $stockDeliveryDetail->volume += $detail->volume;
+                    $stockDeliveryDetail->save();
+                } else {
+                    $stockDeliveryDetail = new StockDeliveryDetail;
+                    $stockDeliveryDetail->stock_delivery_id = $stockDelivery->id;
+                    $stockDeliveryDetail->item_id = $detail->item_id;
+                    $stockDeliveryDetail->uom_id = $detail->uom_id;
+                    $stockDeliveryDetail->qty = $detail->qty;
+                    $stockDeliveryDetail->weight = $detail->weight;
+                    $stockDeliveryDetail->volume = $detail->volume;
+                    $stockDeliveryDetail->ref_code = $detail->ref_code;
+                    $stockDeliveryDetail->control_date = $detail->control_date;
+                    $stockDeliveryDetail->save();
+                }
+            }   
+        }
+        return redirect('stock_deliveries/'.$stockDelivery->id.'/edit')->with('success','Daftar barang berhasil di copy.');
+    }
+    public function print(StockDelivery $stockDelivery){
+        // if ($stockDelivery->status != 'Completed') {
+        //     $stockDelivery->status = 'Processed';
+        //     $stockDelivery->save();
+        try {
+            activity()
+                ->performedOn($stockDelivery)
+                ->causedBy(Auth::user())
+                ->withProperties($stockDelivery)
+                ->log('Print ' . 'Goods Issue' );
+        } catch (\Exception $e) {
+            
+        }
+        
+        if($stockDelivery->qr_code == null) {
+            $image = \QrCode::format('png')
+                ->size(180)
+                ->generate(route('reportFromQr', ['stock_delivery' => $stockDelivery->id]));
+            $output_file = 'qr_code/' . time(). $stockDelivery->id . '.png';
+            \Storage::disk('public')->put($output_file, $image);
+            $stockDelivery->qr_code = $output_file;
+            $stockDelivery->save();
+        }
+        // }
+        return view('stock_deliveries.delivery-note',compact('stockDelivery'));
+    }
+
+
+
+    public function completed(StockDelivery $stockDelivery, Request $request) {
+        if(Auth::user()->id != $stockDelivery->user_id) {
+            abort(403);
+        }
+
+        $request->validate([
+            'password' => 'required|string',
+        ]);
+
+
+        $hasher = app('hash');
+        if (!$hasher->check($request->input('password'), Auth::user()->password)) {
+            return redirect()->back()->with('error','Password salah');
+        }
+
+        $project_id = session()->get('current_project')->id;
+
+        $picking_plan = StockEntry::find($stockDelivery->stock_entry_id);
+
+        $stockDelivery->status = 'Completed';
+        $stockDelivery->save();
+
+        //create data log
+        // $data_log = array(
+        //     'user_id' => Auth::user()->id,
+        //     'type' => $stockDelivery->type,
+        //     'sub_type' => 'gi',
+        //     'record_id' => $stockDelivery->id,
+        //     'status' => 'completed',
+        // );
+
+        // $input = array_except($data_log, '_token');
+        // $DataLog = DataLog::create($input);
+
+        try {
+            activity()
+                ->performedOn($stockDelivery)
+                ->causedBy(Auth::user())
+                ->withProperties($stockDelivery)
+                ->log('Completed ' . $stockDelivery );
+
+                $user_id =  $picking_plan->warehouse->branch->user->pluck('id'); $users = User::whereIn('id', $user_id)->get();
+                $sendNotifications = [];
+
+                foreach($users as $user) {
+                    if($user->hasRole('WarehouseManager')) {
+                        $sendNotifications[] = $user;
+                    }
+                }
+
+                $emails = collect($sendNotifications);
+
+                if($emails->count()) {
+                    // $res = Mail::to($emails->first()->email)
+                    //         ->cc($emails->pluck('email'))
+                    //         ->queue(new GICompleted($stockDelivery));
+                    $res = 0;
+                }
+            
+        } catch (\Exception $e) {
+            
+        }
+
+        return redirect()->back()->with('success','Successfully completed');
+        
+    }
+    
+    public function closed(StockDelivery $stockDelivery, Request $request) {
+        
+        if(Auth::user()->id != $stockDelivery->user_id) {
+            abort(403);
+        }
+
+        $request->validate([
+            'password' => 'required|string',
+        ]);
+
+        $hasher = app('hash');
+        if (!$hasher->check($request->input('password'), Auth::user()->password)) {
+            return redirect()->back()->with('error','Password salah');
+        }
+        $stockDelivery->status = 'Closed';
+        $stockDelivery->save();
+
+        $stockEntry = StockEntry::where([
+            'id' => $stockDelivery->stock_entry_id,
+        ])->first();
+
+        $stockEntryDetail = StockEntryDetail::where([
+            'stock_entry_id' => $stockDelivery->stock_entry_id,
+        ])->update(['status' => 'Closed']);
+        
+        try {
+            activity()
+                ->performedOn($stockDelivery)
+                ->causedBy(Auth::user())
+                ->withProperties($stockDelivery)
+                ->log('Closed ' . $stockDelivery );
+        } catch (\Exception $e) {
+            
+        }
+        return redirect()->back()->with('success','Successfully closed');
+    }
+}

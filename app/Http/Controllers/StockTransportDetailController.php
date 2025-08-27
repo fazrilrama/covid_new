@@ -1,0 +1,632 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\StockEntryDetail;
+use App\StockTransport;
+use App\StockTransportDetail;
+use App\AdvanceNotice;
+use App\AdvanceNoticeDetail;
+use App\Item;
+use App\ItemProjects;
+use App\Uom;
+use App\Warehouse;
+use App\Storage;
+use App\Project;
+use App\DataLog;
+use Response;
+use Illuminate\Http\Request;
+use DB;
+use Auth;
+use Carbon\Carbon;
+use Illuminate\Support\Facades\Input;
+use Validator;
+
+class StockTransportDetailController extends Controller
+{
+    /**
+     * Display a listing of the resource.
+     *
+     * @return \Illuminate\Http\Response
+     */
+    public function index()
+    {
+        $collections = StockTransportDetail::orderBy('id', 'desc')->get();
+        return view('stock_transport_details.index',compact('collections'));
+    }
+
+    /**
+     * Show the form for creating a new resource.
+     *
+     * @return \Illuminate\Http\Response
+     */
+    public function create($stock_transport_id = NULL)
+    {
+        $projectId          = session()->get('current_project')->id;
+        $action             = route('stock_transport_details.store');
+        $method             = 'POST';
+        // $stock_transports   = StockTransport::pluck('code', 'id');
+        $stockTransport     = StockTransport::find($stock_transport_id);
+        
+        if(Auth::user()->id != $stockTransport->user_id || $stockTransport->status == 'Completed') {
+            abort(403);
+        }
+
+        //get item yg berasal dari data ain/aon
+        $items = AdvanceNoticeDetail::where('stock_advance_notice_id', $stockTransport->advance_notice_id)->get();
+
+        foreach ($items as $item) {
+            $inbound = AdvanceNoticeDetail::join('stock_advance_notices as san', 'san.id', '=', 'stock_advance_notice_details.stock_advance_notice_id')
+                ->where('san.status', 'Completed')
+                ->where([
+                    'stock_advance_notice_details.item_id' => $item->item_id,
+                    'stock_advance_notice_details.ref_code' => $item->ref_code,
+                    'san.id' => $stockTransport->advance_notice_id,
+                ])
+                ->sum('stock_advance_notice_details.qty');
+
+            if($stockTransport->type=='inbound'){
+                $outbound_completed = StockTransportDetail::join('stock_transports as st', 'st.id', '=', 'stock_transport_details.stock_transport_id')
+                ->where('st.status', 'Completed')
+                ->where([
+                    'stock_transport_details.item_id' => $item->item_id,
+                    'stock_transport_details.ref_code' => $item->ref_code,
+                    'st.advance_notice_id' => $stockTransport->advance_notice_id
+                ])
+                ->sum('stock_transport_details.qty');
+            }
+            //ketika dp, data plan adalah actual
+            else{
+                $outbound_completed = StockTransportDetail::join('stock_transports as st', 'st.id', '=', 'stock_transport_details.stock_transport_id')
+                ->where('st.status', 'Completed')
+                ->where([
+                    'stock_transport_details.item_id' => $item->item_id,
+                    'stock_transport_details.ref_code' => $item->ref_code,
+                    'st.advance_notice_id' => $stockTransport->advance_notice_id
+                ])
+                ->sum('stock_transport_details.plan_qty');
+            }
+            
+
+            $outbound_incompleted = StockTransportDetail::join('stock_transports as st', 'st.id', '=', 'stock_transport_details.stock_transport_id')
+                ->where('st.status', 'Processed')
+                ->where([
+                    'stock_transport_details.item_id' => $item->item_id,
+                    'stock_transport_details.ref_code' => $item->ref_code,
+                    'st.advance_notice_id' => $stockTransport->advance_notice_id
+                ])
+                ->sum('stock_transport_details.plan_qty');
+
+                //return $stockTransport->advance_notice_id;
+
+            $item->item_outstanding = $inbound - ($outbound_completed + $outbound_incompleted);
+        }
+
+        //return $items;
+
+        $stockTransportDetail = new StockTransportDetail;
+        $stockTransportDetail->stock_transport_id = $stock_transport_id; // assign header ID
+        $advanceNotice = AdvanceNotice::join('stock_transports as st', 'st.advance_notice_id', '=', 'stock_advance_notices.id')
+            ->where('st.id', $stock_transport_id)
+            ->first(['stock_advance_notices.ref_code']);
+
+        $weightVal = 0;
+        $volumeVal = 0;
+
+        // return $stockTransportDetail;
+        return view('stock_transport_details.create',compact('weightVal', 'volumeVal', 'action','method','stockTransportDetail','items','stock_transport', 'advanceNotice'));
+    }
+
+    /**
+     * Store a newly created resource in storage.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\Response
+     */
+    public function store(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'item_id'       => 'required|exists:items,id',
+            'plan_qty'           => 'required|numeric',
+            'plan_weight'        => 'required|numeric',
+            'plan_volume'        => 'required|numeric',
+            'control_date'  => 'required|date',
+        ]);
+
+        if ($request->plan_qty == 0 ) {
+            return redirect()->back()
+                ->with('error', 'Jumlah Barang tidak boleh kurang dari 1');
+               
+        }
+        
+        $stockTransportId       = $request->get('stock_transport_id');
+        $qty                    = $request->get('plan_qty');
+        $uomId                  = $request->get('uom_id');
+        $ref_code               = $request->get('ref_code');
+        $item_id                = $request->get('item_id');
+        $control_date           = $request->get('control_date');
+
+        $stockTransport         = StockTransport::find($stockTransportId);
+        $checkCountItem         = StockTransportDetail::where('stock_transport_id', $stockTransportId)->count();
+
+        if(Auth::user()->id != $stockTransport->user_id || $stockTransport->status == 'Completed') {
+            abort(403);
+        }
+
+
+        // Kalau error, return dengan existing data dan ref_codes dari dokumen referensi
+        if ($validator->fails()) {
+            return redirect()->back()
+                    ->withInput($request->input())
+                    ->with('error', $validator->errors()->first());
+        }
+
+        // Kalau tidak ada error, validasi jumlah qty yang ingin dikirim
+        DB::beginTransaction();
+
+        try {
+            if (empty($checkCountItem)) {
+                $stockTransport->status = 'Processed';
+                $stockTransport->save();
+            }
+
+            $inbound = AdvanceNoticeDetail::where('stock_advance_notice_id', $stockTransport->advance_notice_id)
+                                ->where('item_id','=',$item_id)
+                                ->where('ref_code','=',$ref_code)
+                                ->sum('qty');
+            
+            if($stockTransport->type == 'inbound'){
+                $outbound_completed = StockTransportDetail::join('stock_transports as st', 'st.id', 'stock_transport_details.stock_transport_id')
+                                ->where('st.status','Completed')
+                                ->where('st.advance_notice_id', $stockTransport->advance_notice_id)
+                                ->where('stock_transport_details.item_id','=',$item_id)
+                                ->where('stock_transport_details.ref_code','=',$ref_code)
+                                ->sum('qty');
+            }
+            else{
+                $outbound_completed = StockTransportDetail::join('stock_transports as st', 'st.id', 'stock_transport_details.stock_transport_id')
+                                ->where('st.status','Completed')
+                                ->where('st.advance_notice_id', $stockTransport->advance_notice_id)
+                                ->where('stock_transport_details.item_id','=',$item_id)
+                                ->where('stock_transport_details.ref_code','=',$ref_code)
+                                ->sum('plan_qty');
+            }
+            
+
+            $outbound_incompleted = StockTransportDetail::join('stock_transports as st', 'st.id', 'stock_transport_details.stock_transport_id')
+                                ->where('st.status','Processed')
+                                ->where('st.advance_notice_id', $stockTransport->advance_notice_id)
+                                ->where('stock_transport_details.item_id','=',$item_id)
+                                ->where('stock_transport_details.ref_code','=',$ref_code)
+                                ->sum('plan_qty');
+            
+            $outstanding    = $inbound - ($outbound_completed + $outbound_incompleted);
+            
+            // echo $inbound.'<br/>';
+            // echo ($outbound_completed + $outbound_incompleted).'<br/>';
+            // return $outstanding;
+
+            if ($inbound == null) {
+                return redirect()->back()
+                    ->withInput($request->input())
+                    ->with('error', 'Group Reference Tidak Sama');
+            }
+            // dd($outstanding);
+            if($stockTransport->type == 'outbound') {
+                if ($outstanding < $qty ) {
+                    return redirect()->back()
+                        ->withInput($request->input())
+                        ->with('error', 'Jumlah item melebihi jumlah outstanding item yang bisa di proses');
+                }    
+            }
+
+            $weight     = $request->get('plan_weight');
+            $volume     = $request->get('plan_volume');
+
+            $checkItemExist = StockTransportDetail::where([
+                    'item_id'               => $item_id,
+                    'stock_transport_id'    => $stockTransportId,
+                    'ref_code'              => $ref_code,
+                    'uom_id'                => $uomId,
+                ])->first();
+            
+            if (!empty($checkItemExist)) {
+                $checkItemExist->plan_qty    += $qty; 
+                $checkItemExist->plan_weight += $weight; 
+                $checkItemExist->plan_volume += $volume; 
+                $checkItemExist->save(); 
+            }else{
+                $model                      = new StockTransportDetail;
+                $model->stock_transport_id  = $stockTransportId;
+                $model->item_id             = $item_id;
+                $model->uom_id              = $uomId;
+                $model->plan_qty            = $qty;
+                $model->plan_weight         = $weight;
+                $model->plan_volume         = $volume;
+                $model->ref_code            = $ref_code;
+                $model->control_date        = $control_date;
+                $model->save();
+            }
+
+            try {
+                activity()
+                    ->performedOn($stockTransport)
+                    ->causedBy(Auth::user())
+                    ->withProperties($stockTransport)
+                    ->log('Closed ' . ($stockTransport->type == 'inbound' ? 'Good Receiving' : 'Delivery Plan') );
+            } catch (\Exception $e) {
+                
+            }
+        }catch (\Exception $e) {
+            // dd($e);
+            DB::rollback();
+            return redirect()->back()->withInput($request->input())->with('error', $e->getMessage());
+        }
+
+        DB::commit();
+
+        // Redirect ke view headernya langsung
+        return redirect('stock_transports/'.$stockTransportId.'/edit')->with('success', 'Item berhasil ditambah');
+    }
+
+    /**
+     * Display the specified resource.
+     *
+     * @param  \App\StockTransportDetail  $stockTransportDetail
+     * @return \Illuminate\Http\Response
+     */
+    public function show($stockTransportDetail)
+    {
+    }
+
+    /**
+     * Show the form for editing the specified resource.
+     *
+     * @param  \App\StockTransportDetail  $stockTransportDetail
+     * @return \Illuminate\Http\Response
+     */
+    // public function edit(StockTransportDetail $stockTransportDetail)
+    public function edit($id)
+    {
+        $stockTransportDetail = StockTransportDetail::find($id);
+        $projectId = session()->get('current_project')->id;
+        $url = "stock_transport_details/$stockTransportDetail->id/update";
+        $url_actual = "stock_transport_details/$stockTransportDetail->id/update_actual";
+        $action = url($url);
+        $action_actual = url($url_actual);
+        $method = 'PUT';
+
+        // return "HELLO WORLD";
+        // $stock_transports = StockTransport::pluck('code', 'id');
+        $stockTransport     = StockTransport::find($stockTransportDetail->stock_transport_id);
+        $item = Item::find($stockTransportDetail->item_id);
+
+        // return $stockTransport;
+        
+
+        if(Auth::user()->id != $stockTransport->user_id || $stockTransport->status == 'Completed') {
+            abort(403);
+        }
+                                
+        $inbound = AdvanceNoticeDetail::join('stock_advance_notices as san', 'san.id', '=', 'stock_advance_notice_details.stock_advance_notice_id')
+            ->where('san.status', 'Completed')
+            ->where([
+                'stock_advance_notice_details.item_id' => $item->id,
+                'stock_advance_notice_details.ref_code' => $stockTransportDetail->ref_code,
+                'san.id' => $stockTransport->advance_notice_id,
+            ])
+            ->sum('stock_advance_notice_details.qty');
+        
+        if($stockTransport->type == 'inbound'){    
+            $outbound_completed = StockTransportDetail::join('stock_transports as st', 'st.id', '=', 'stock_transport_details.stock_transport_id')
+                ->where('st.status', 'Completed')
+                ->where([
+                    'stock_transport_details.item_id' => $item->id,
+                    'stock_transport_details.ref_code' => $stockTransportDetail->ref_code,
+                    'st.advance_notice_id' => $stockTransport->advance_notice_id
+                ])
+                ->sum('stock_transport_details.qty');
+        }
+        //ketika outbound actual adalah plan
+        else{
+            $outbound_completed = StockTransportDetail::join('stock_transports as st', 'st.id', '=', 'stock_transport_details.stock_transport_id')
+                ->where('st.status', 'Completed')
+                ->where([
+                    'stock_transport_details.item_id' => $item->id,
+                    'stock_transport_details.ref_code' => $stockTransportDetail->ref_code,
+                    'st.advance_notice_id' => $stockTransport->advance_notice_id
+                ])
+                ->sum('stock_transport_details.plan_qty');
+        }
+        
+        $outbound_incompleted = StockTransportDetail::join('stock_transports as st', 'st.id', '=', 'stock_transport_details.stock_transport_id')
+        ->where('st.status', 'Processed')
+        ->where('stock_transport_details.id','<>',$stockTransportDetail->id)
+        ->where([
+            'stock_transport_details.item_id' => $item->id,
+            'stock_transport_details.ref_code' => $stockTransportDetail->ref_code,
+            'st.advance_notice_id' => $stockTransport->advance_notice_id
+        ])
+        ->sum('stock_transport_details.plan_qty');
+        
+        
+
+        $stockTransportDetail->item_outstanding = $inbound - ($outbound_completed + $outbound_incompleted);
+
+        $itemSelected = Item::find($stockTransportDetail->item_id);
+
+        $weightVal = $itemSelected->weight;
+        $volumeVal = $itemSelected->volume;
+        return view('stock_transport_details.edit',compact('weightVal', 'volumeVal', 'action_actual','action','method','stockTransportDetail','items','stock_transports','stockTransport'));
+    }
+
+    /**
+     * Update the specified resource in storage.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @param  \App\StockTransportDetail  $stockTransportDetail
+     * @return \Illuminate\Http\Response
+     */
+    public function updateActual(Request $request, $std_id)
+    {
+        //Validate
+        $request->validate([
+            'qty' => 'required|numeric',
+            'volume' => 'required|numeric',
+            'weight' => 'required|numeric',
+        ]);
+
+        $stockTransportDetail = StockTransportDetail::find($std_id);
+
+        $stockTransportId   = $stockTransportDetail->stock_transport_id;
+        $qty                = $request->get('qty');
+        $stockTransport     = StockTransport::find($stockTransportId);
+
+        if(Auth::user()->id != $stockTransport->user_id || $stockTransport->status == 'Completed') {
+            abort(403);
+        }
+
+        // dd($inbound);
+
+
+        // echo $inbound.'<br/>';
+        // echo $outbound_completed.' '.$outbound_incompleted.'<br/>';
+        // echo ($outbound_completed + $outbound_incompleted).'<br/>';
+        // return $outstanding;
+        if($stockTransport->type == 'outbound'){
+            if ($qty > $stockTransportDetail->plan_qty ) {
+                return redirect()->back()
+                        ->withInput($request->input())
+                        ->with('error', 'Jumlah item melebihi jumlah plan item');
+            }
+        }
+         
+        $model = $stockTransportDetail;
+        $model->qty = $request->get('qty');
+        $model->volume = $request->get('volume');
+        $model->weight = $request->get('weight');
+        $model->save();
+
+        if($stockTransport->type == 'inbound'){
+            $sub_type = 'gr';
+        }
+        else{
+            $sub_type = 'dp';
+        }
+
+        //create data log
+        // $data_log = array(
+        //     'user_id' => Auth::user()->id,
+        //     'type' => $stockTransport->type,
+        //     'sub_type' => $sub_type,
+        //     'record_id' => $stockTransport->id,
+        //     'status' => 'input_actual',
+        // );
+
+        // $input = array_except($data_log, '_token');
+        // $DataLog = DataLog::create($input);
+
+            // Redirect ke view headernya langsung
+        return redirect('stock_transports/'.$stockTransportDetail->stock_transport_id.'/edit')->with('success', 'Data Actual berhasil disimpan');
+    
+    }
+
+
+    // public function update(Request $request, StockTransportDetail $stockTransportDetail)
+    public function update(Request $request, $id)
+    {
+        //Validate
+        $request->validate([
+            'plan_qty' => 'required|numeric',
+            'plan_weight' => 'required|numeric',
+            'plan_volume' => 'required|numeric',
+            'control_date' => 'required|date',
+        ]);
+
+        
+
+        if ($request->plan_qty == 0 ) {
+            return redirect()->back()->with('error', 'Jumlah Barang tidak boleh kurang dari 1');
+        }
+
+        $stockTransportDetail   = StockTransportDetail::find($id);
+        $stockTransportId       = $request->get('stock_transport_id');
+        $itemId                 = $request->get('item_id');
+        $qty                    = $request->get('plan_qty');
+        $uomId                  = $request->get('uom_id');
+        $uom_name               = Uom::find($uomId)->name;
+        $stockTransport         = StockTransport::find($stockTransportId);
+        
+
+        if(Auth::user()->id != $stockTransport->user_id || $stockTransport->status == 'Completed') {
+            abort(403);
+        }
+
+        $inbound = AdvanceNoticeDetail::where('stock_advance_notice_id', $stockTransport->advance_notice_id)
+            ->where('item_id','=',$request->get('item_id'))
+            ->where('ref_code','=',$request->get('ref_code'))
+            ->sum('qty');
+
+        
+        if($stockTransport->type == 'inbound'){
+            $outbound_completed = StockTransportDetail::join('stock_transports as st', 'st.id', 'stock_transport_details.stock_transport_id')
+                ->where('st.status','Completed')
+                ->where('st.advance_notice_id', $stockTransport->advance_notice_id)
+                ->where('stock_transport_details.item_id','=',$itemId)
+                ->where('stock_transport_details.ref_code','=',$request->get('ref_code'))
+                ->sum('qty');
+        } else {
+            $outbound_completed = StockTransportDetail::join('stock_transports as st', 'st.id', 'stock_transport_details.stock_transport_id')
+                ->where('st.status','Completed')
+                ->where('st.advance_notice_id', $stockTransport->advance_notice_id)
+                ->where('stock_transport_details.item_id','=',$itemId)
+                ->where('stock_transport_details.ref_code','=',$request->get('ref_code'))
+                ->sum('plan_qty');
+        }
+
+        $outbound_incompleted = StockTransportDetail::join('stock_transports as st', 'st.id', 'stock_transport_details.stock_transport_id')
+            ->where('st.status','Processed')
+            ->where('stock_transport_details.id','<>',$stockTransportDetail->id)
+            ->where('st.advance_notice_id', $stockTransport->advance_notice_id)
+            ->where('stock_transport_details.item_id','=',$itemId)
+            ->where('stock_transport_details.ref_code','=',$request->get('ref_code'))
+            ->sum('plan_qty');
+            
+        $outstanding  = $inbound - ($outbound_completed + $outbound_incompleted);
+
+        if ($inbound == null) {
+            return redirect()->back()
+                ->withInput($request->input())
+                ->with('error', 'Group Reference Tidak Sama')
+                ->with('uom_name', $uom_name);
+        }
+        if($stockTransport->type == 'outbound') {
+            if ($qty > $outstanding ) {
+                return redirect()->back()
+                        ->withInput($request->input())
+                        ->with('error', 'Jumlah item melebihi jumlah outstanding item yang bisa di proses')
+                        ->with('uom_name', $uom_name);
+            }
+        }
+        
+        $weight = $request->get('plan_weight');
+        $volume = $request->get('plan_volume');
+        $ref_code = $request->get('ref_code');
+        $control_date = $request->get('control_date');
+
+        $model = $stockTransportDetail;
+        $model->item_id = $itemId;
+        $model->uom_id = $uomId;
+        $model->plan_qty = $qty;
+        $model->plan_weight = $weight;
+        $model->plan_volume = $volume;
+        $model->ref_code = $ref_code;
+        $model->control_date = $control_date;
+        $model->save();
+
+        // Redirect ke view headernya langsung
+        return redirect('stock_transports/'.$model->stock_transport_id.'/edit')->with('success', 'Data berhasil disimpan');
+    }
+
+    /**
+     * Remove the specified resource from storage.
+     *
+     * @param  \App\StockTransportDetail  $stockTransportDetail
+     * @return \Illuminate\Http\Response
+     */
+    public function destroy(StockTransportDetail $stockTransportDetail)
+    {
+        $stockTransport = StockTransport::find($stockTransportDetail->stock_transport_id); 
+
+        if(Auth::user()->id != $stockTransport->user_id) {
+            abort(403);
+        }
+          
+        $stockTransportDetail->delete();
+        // Redirect ke view headernya langsung
+        return redirect('stock_transports/'.$stockTransportDetail->stock_transport_id.'/edit')->with('success','Data berhasil dihapus');
+    }
+
+    public function controlMethod(Request $request)
+    {
+        $id = Input::get('id');
+        $ainId = Input::get('ain_id');
+        $stockTransportId = Input::get('stock_transport_id');
+        $stockTransport  = StockTransport::find($request->input('parentId'));
+
+        $item_ref_code  = Input::get('ref_code');
+
+        $item = Item::findOrFail($id);
+        // dd($item);
+        if (!empty($ainId)) {
+            $advanceNotice = AdvanceNoticeDetail::where([
+                'item_id' => $id,
+                'stock_advance_notice_id' => $ainId
+            ])->first();
+        }
+
+        $refCodeAtuh = [];
+        $controlDates = [];
+        $warehouses = [];
+        $storages = [];
+
+        if (!empty($ainId)) {
+            $refCodeAtuh = AdvanceNoticeDetail::where([
+                'item_id' => $id,
+                'stock_advance_notice_id' => $ainId,
+                'ref_code' => $item_ref_code,
+            ])
+            ->groupBy('ref_code')->get(['ref_code']);
+
+        }
+        if(!empty($stockTransportId) && $stockTransportId != 'undefined'){
+
+            $refCodeAtuh = StockTransportDetail::where([
+                'item_id' => $id,
+                'stock_transport_id' => $stockTransportId
+            ])
+            ->groupBy('ref_code')->get(['ref_code']);
+
+            $controlDates = StockEntryDetail::join('stock_entries as se', 'se.id', '=', 'stock_entry_details.stock_entry_id')
+                ->where([
+                    'stock_entry_details.item_id' => $id,
+                    'se.type' => 'inbound'
+                ])
+                ->groupBy('stock_entry_details.control_date')
+                ->get(['stock_entry_details.control_date']);
+
+            $storages = StockEntryDetail::join('stock_entries as se', 'se.id', '=', 'stock_entry_details.stock_entry_id')
+                ->join('storages as s', 's.id', '=', 'stock_entry_details.storage_id')
+                ->where([
+                    'stock_entry_details.item_id' => $id,
+                    'se.type' => 'inbound',
+                ])
+                ->where('stock_entry_details.status', '<>', 'canceled')
+                ->groupBy('s.id')
+                ->get(['s.id', 's.code', 's.warehouse_id']);
+            $whId = [];
+            foreach ($storages as $storage) {
+                array_push($whId, $storage->warehouse_id);
+            }
+            $warehouses = Warehouse::whereIn('id', $whId)->get(['id', 'name', 'code']);
+        }
+
+        $results[] = [
+            'id' => $item->id,
+            'weight' => $item->weight,
+            'volume' => $item->volume,
+            'default_uom_id' => $item->default_uom_id,
+            'default_uom_name' => $item->default_uom->name,
+            'ref_code' => empty($advanceNotice) ?'': $advanceNotice->ref_code,
+            'ref_code_array' => $refCodeAtuh,
+            'warehouses' => $warehouses,
+            'storages' => $storages,
+            'control_date' => empty($stockTransport) ?'' : Carbon::parse($stockTransport->created_at)->format('Y-m-d'),
+            'control_dates' => $controlDates,
+            'control_method' => $item->control_method->name,
+            'control_method_id' => $item->control_method->id,
+        ];
+
+        return Response::json($results);
+    }
+}
