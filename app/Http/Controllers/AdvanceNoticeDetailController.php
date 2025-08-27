@@ -48,6 +48,7 @@ class AdvanceNoticeDetailController extends Controller
         // } else {
         //     dd('false');
         // }
+
         if((Auth::user()->hasRole('WarehouseSupervisor') && $advanceNotice->project_id != '337')) {
             if(Auth::user()->id != $advanceNotice->user_id || $advanceNotice->status == 'Completed') {
                 abort(403);
@@ -162,6 +163,8 @@ class AdvanceNoticeDetailController extends Controller
         //$uoms = Uom::pluck('name', 'id');
         $advanceNoticeDetail = new AdvanceNoticeDetail;
         $advanceNoticeDetail->stock_advance_notice_id = $advance_notice_id; // assign header ID
+
+        $advance_notices = $advanceNotice;
         return view('advance_notice_details.create',compact('action','method','advanceNoticeDetail','items','advance_notices', 'advanceNotice'));
     }
 
