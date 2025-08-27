@@ -173,7 +173,7 @@ Route::middleware(['auth','first-time-login'])->group(function () {
         Route::middleware(['role:CargoOwner|WarehouseManager|WarehouseSupervisor'])->post('datatable/{type}', 'AdvanceNoticeApiController@dataTables')->name('datatable');
         Route::middleware(['role:CargoOwner|WarehouseSupervisor'])->get('/{advance_notice}/edit', 'AdvanceNoticeController@edit')->name('edit');
         Route::middleware(['role:WarehouseSupervisor'])->get('/{advance_notice}/closed', 'AdvanceNoticeController@closed')->name('closed');
-        Route::middleware(['role:CargoOwner|WarehouseSupervisor'])->post('/{advance_notice}/completed', 'AdvanceNoticeController@completed')->name('completed');
+        Route::post('/{advance_notice}/completed', 'AdvanceNoticeController@completed')->name('completed');
         Route::middleware(['role:WarehouseSupervisor'])->post('/{advance_notice}/closed', 'AdvanceNoticeController@closed')->name('closed');
         Route::get('/getspk/{contractid}', 'AdvanceNoticeController@getDataSpk')->name('spk');
         Route::middleware(['role:WarehouseManager'])->post('/assign_to/{advance_notice}', 'AdvanceNoticeController@assignTo')->name('assignto');

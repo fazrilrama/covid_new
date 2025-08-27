@@ -1023,11 +1023,11 @@ class AdvanceNoticeController extends Controller
     
     public function completed(AdvanceNotice $advanceNotice, Request $request) {
         
-        if(Auth::user()->hasRole('WarehouseSupervisor') && session()->get('current_project')->id != '337') {
-            if(Auth::user()->id != $advanceNotice->user_id) {
-                abort(403);
-            }
-        }
+        // if(Auth::user()->hasRole('WarehouseSupervisor') && session()->get('current_project')->id != '337') {
+        //     if(Auth::user()->id != $advanceNotice->user_id) {
+        //         abort(403);
+        //     }
+        // }
         
         $request->validate([
             'password' => 'required|string',
