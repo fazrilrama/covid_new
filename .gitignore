@@ -14,3 +14,4 @@ yarn-error.log
 .phpunit.result.cache
 /vendor
 /public/bak_file_sql
+/storage
