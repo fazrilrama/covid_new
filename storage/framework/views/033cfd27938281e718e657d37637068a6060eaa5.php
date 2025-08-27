@@ -120,7 +120,7 @@
                         
                         <td>
                             <div class="btn-toolbar">
-                                <?php if(Auth::user()->id == $item->user_id || (Auth::user()->hasRole('WarehouseSupervisor') && session()->get('current_project')->id == '337')): ?>
+                                <?php if(Auth::user()->id == $item->user_id || (Auth::user()->hasRole('WarehouseSupervisor'))): ?>
                                     <?php if($item->editable): ?>
                                         <div class="btn-group" role="group">
                                             <a href="<?php echo e(url('advance_notices/' . $item->id .'/edit')); ?>" type="button" class="btn btn-primary" title="Edit">

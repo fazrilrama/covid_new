@@ -82,11 +82,11 @@ class AdvanceNoticeController extends Controller
                     // ->select(['user_id','id','code','origin_id','destination_id','consignee_id','shipper_id',
                     // 'etd','eta','status','user_id2','warehouse_id'])
                     ->where('project_id', session()->get('current_project')->id);
-                    if(session()->get('current_project')->id != 337) {
-                        $collections->whereIn('status',['Completed']);
-                    }else {
-                        $collections->whereIn('status',['Processed', 'Completed', 'Pending']);
-                    }
+                    // if(session()->get('current_project')->id != 337) {
+                    //     $collections->whereIn('status',['Completed']);
+                    // }else {
+                    // }
+                    $collections->whereIn('status',['Processed', 'Completed', 'Pending']);
                     $collections
                     ->where('advance_notice_activity_id','<>', 20)
                     ->orderBy('id', 'desc');
@@ -98,9 +98,14 @@ class AdvanceNoticeController extends Controller
             ->whereIn('status',['Closed'])
             ->orderBy('id', 'desc');
 
+            // $check = $collections->get();
+            // dd($check[0]);
+
                     
                     // ->get(['user_id','id','code','origin_id','destination_id','consignee_id','shipper_id','etd','eta','status','employee_name']);
 
+
+                    // dd(Auth::user()->branch->id);
             if($type == 'inbound') {
                 // $collections = $collections->filter(function ($item) {
                 //     return $item->consignee_id == Auth::user()->branch->id;
@@ -146,6 +151,7 @@ class AdvanceNoticeController extends Controller
 
         $collections = $collections->limit(50)->get();
         $collections_closed = $collections_closed->limit(50)->get();
+
 
         if($collections) {
             $hasil = [];
@@ -478,6 +484,8 @@ class AdvanceNoticeController extends Controller
         // {
         //     Abort(403);
         // }
+
+        dd('test');
         $action = route('advance_notices.store');
         $method = 'POST';
         $cities = City::pluck('name', 'id');

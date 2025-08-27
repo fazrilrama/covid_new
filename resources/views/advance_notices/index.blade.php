@@ -116,7 +116,7 @@
                         
                         <td>
                             <div class="btn-toolbar">
-                                @if(Auth::user()->id == $item->user_id || (Auth::user()->hasRole('WarehouseSupervisor') && session()->get('current_project')->id == '337'))
+                                @if(Auth::user()->id == $item->user_id || (Auth::user()->hasRole('WarehouseSupervisor')))
                                     @if($item->editable)
                                         <div class="btn-group" role="group">
                                             <a href="{{ url('advance_notices/' . $item->id .'/edit') }}" type="button" class="btn btn-primary" title="Edit">
