@@ -49,11 +49,13 @@ class AdvanceNoticeDetailController extends Controller
         //     dd('false');
         // }
 
-        if((Auth::user()->hasRole('WarehouseSupervisor') && $advanceNotice->project_id != '337')) {
-            if(Auth::user()->id != $advanceNotice->user_id || $advanceNotice->status == 'Completed') {
-                abort(403);
-            }
-        }
+        // if((Auth::user()->hasRole('WarehouseSupervisor') && $advanceNotice->project_id != '337')) {
+        //     if(Auth::user()->id != $advanceNotice->user_id || $advanceNotice->status == 'Completed') {
+        //         abort(403);
+        //     }
+        // }
+
+        // dd('test');
 
 
         //QUESTION
@@ -196,11 +198,11 @@ class AdvanceNoticeDetailController extends Controller
         $advanceNoticeDetailId = $request->get('stock_advance_notice_id');
 
         $advanceNotice = AdvanceNotice::find($advanceNoticeDetailId);
-        if(Auth::user()->hasRole('WarehouseSupervisor') && $advanceNotice->project_id != '337') {
-            if(Auth::user()->id != $advanceNotice->user_id || $advanceNotice->status == 'Completed') {
-                abort(403);
-            }
-        }
+        // if(Auth::user()->hasRole('WarehouseSupervisor') && $advanceNotice->project_id != '337') {
+        //     if(Auth::user()->id != $advanceNotice->user_id || $advanceNotice->status == 'Completed') {
+        //         abort(403);
+        //     }
+        // }
 
         $item_id = $request->get('item_and');
 
