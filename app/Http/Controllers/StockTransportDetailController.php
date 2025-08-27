@@ -113,6 +113,7 @@ class StockTransportDetailController extends Controller
         $weightVal = 0;
         $volumeVal = 0;
 
+        $stock_transport = $stockTransport;
         // return $stockTransportDetail;
         return view('stock_transport_details.create',compact('weightVal', 'volumeVal', 'action','method','stockTransportDetail','items','stock_transport', 'advanceNotice'));
     }
@@ -357,7 +358,9 @@ class StockTransportDetailController extends Controller
 
         $weightVal = $itemSelected->weight;
         $volumeVal = $itemSelected->volume;
-        return view('stock_transport_details.edit',compact('weightVal', 'volumeVal', 'action_actual','action','method','stockTransportDetail','items','stock_transports','stockTransport'));
+
+        $stock_transports = $stockTransport;
+        return view('stock_transport_details.edit',compact('weightVal', 'volumeVal', 'action_actual','action','method','stockTransportDetail','stock_transports','stockTransport'));
     }
 
     /**

@@ -413,6 +413,8 @@ class StockEntryDetailController extends Controller
         $action = route('stock_entry_details.update', $stockEntryDetail->id);
         $method = 'PUT';
 
+        $getControlDate = null;
+
         $item = Item::find($stockEntryDetail->item_id);
 
         if(Auth::user()->id != $stockEntry->user_id || $stockEntry->status == 'Completed') {
@@ -648,7 +650,7 @@ class StockEntryDetailController extends Controller
             $stockEntryDetail->item_outstanding = $inbound - $outbound;
         }
 
-        return view('stock_entry_details.edit',compact('action','method', 'stockEntryDetail','item','storages','stockEntry','getControlDate','weightVal','volumeVal'));
+        return view('stock_entry_details.edit',compact('action','method', 'stockEntryDetail','item','storages', 'getControlDate', 'stockEntry','weightVal','volumeVal'));
     }
 
     /**
