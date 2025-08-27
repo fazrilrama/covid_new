@@ -263,7 +263,7 @@ class StockTransportController extends Controller
         $parties = Party::select(['id', 'name'])->get();
 
         $stockTransport = new StockTransport;
-        return view('stock_transports.create',compact('action','method','stockTransport','transport_types','advance_notices','cities','shippers','consignees','type','status', 'parties'));
+        return view('stock_transports.create',compact('action','method','stockTransport','advance_notices','cities','shippers','consignees','type','status', 'parties'));
     }
 
     /**
@@ -543,7 +543,7 @@ class StockTransportController extends Controller
                     $query->where('name','consignee');
                 })->get();
             }
-            return view('stock_transports.edit',compact('warehouseOfficers','warehouses', 'action','method','stockTransport','transport_types','advance_notices','cities','shippers','consignees','employees','type','status','tota','jumlah_item_transport_no_actual', 'parties'));
+            return view('stock_transports.edit',compact('warehouseOfficers','warehouses', 'action','method','stockTransport','transport_types','advance_notices','cities','shippers','consignees','type','status','jumlah_item_transport_no_actual', 'parties'));
         } else {
             return redirect()->back()->with('error','Tidak mempunyai akses');
         }

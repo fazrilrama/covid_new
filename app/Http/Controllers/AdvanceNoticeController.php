@@ -485,7 +485,7 @@ class AdvanceNoticeController extends Controller
         //     Abort(403);
         // }
 
-        dd('test');
+        // dd('test');
         $action = route('advance_notices.store');
         $method = 'POST';
         $cities = City::pluck('name', 'id');
@@ -982,7 +982,7 @@ class AdvanceNoticeController extends Controller
     {
         // Check if owner
 
-        if(Auth::user()->id == $advanceNotice->user_id || (Auth::user()->hasRole('WarehouseSupervisor') && session()->get('current_project')->id == '337')) {
+        if(Auth::user()->id == $advanceNotice->user_id || (Auth::user()->hasRole('WarehouseSupervisor'))) {
             $type = $advanceNotice->type;
             //Processed
             //Completed
