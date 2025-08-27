@@ -6,7 +6,7 @@
 <h1>@if($type=='inbound') Advance Inbound Notice @else Advance Outbound Notice @endif List
     
     <form action="{{route('advance_notices.index',$type)}}" method="GET">
-        @if(Auth::user()->hasRole('CargoOwner') || (Auth::user()->hasRole('WarehouseSupervisor') && session()->get('current_project')->id == '337'))
+        @if(Auth::user()->hasRole('CargoOwner') || (Auth::user()->hasRole('WarehouseSupervisor')))
             <a href="{{url('advance_notices/create/'.$type)}}" type="button" class="btn btn-sm btn-success" title="Create">
                 <i class="fa fa-plus"></i> {{ __('lang.create') }}
             </a>

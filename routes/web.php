@@ -165,7 +165,7 @@ Route::middleware(['auth','first-time-login'])->group(function () {
     Route::prefix('advance_notices')->name('advance_notices.')->group(function () {
         Route::get('get_json/{id}', 'AdvanceNoticeController@getJson');
         Route::middleware(['role:CargoOwner|WarehouseSupervisor'])->post('/', 'AdvanceNoticeController@store')->name('store');
-        Route::middleware(['role:CargoOwner|WarehouseSupervisor'])->get('/create/{type}', 'AdvanceNoticeController@create')->name('create');
+        Route::get('/create/{type}', 'AdvanceNoticeController@create')->name('create');
         Route::middleware(['role:CargoOwner|WarehouseManager|WarehouseSupervisor|Reporting'])->get('/{type}', 'AdvanceNoticeController@index')->name('index');
         Route::middleware(['role:CargoOwner|WarehouseSupervisor'])->put('/{advance_notice}', 'AdvanceNoticeController@update')->name('update');
         Route::middleware(['role:CargoOwner|WarehouseSupervisor'])->delete('/{advance_notice}', 'AdvanceNoticeController@destroy')->name('destroy');

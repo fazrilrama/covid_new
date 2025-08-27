@@ -105,7 +105,6 @@ class AdvanceNoticeController extends Controller
                 // $collections = $collections->filter(function ($item) {
                 //     return $item->consignee_id == Auth::user()->branch->id;
                 // });
-                debugbar()->info('HELLO WORLD 2');
                 $collections = $collections->where('consignee_id', Auth::user()->branch->id);
                 $collections_closed = $collections_closed->where('consignee_id', Auth::user()->branch->id);
 
@@ -137,7 +136,6 @@ class AdvanceNoticeController extends Controller
         // return view('test');
 
         if(Auth::user()->hasRole('CargoOwner')) {
-            
             $collections = AdvanceNotice::where('type',$type)
                     ->where('project_id', session()->get('current_project')->id) 
                     ->where('user_id',Auth::user()->id) 
@@ -476,10 +474,10 @@ class AdvanceNoticeController extends Controller
      */
     public function create($type = 'inbound')
     {
-        if(Auth::user()->hasRole('WarehouseSupervisor') && session()->get('current_project')->id != '337')
-        {
-            Abort(403);
-        }
+        // if(Auth::user()->hasRole('WarehouseSupervisor') && session()->get('current_project')->id != '337')
+        // {
+        //     Abort(403);
+        // }
         $action = route('advance_notices.store');
         $method = 'POST';
         $cities = City::pluck('name', 'id');
