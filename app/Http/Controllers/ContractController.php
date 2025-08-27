@@ -160,6 +160,8 @@ class ContractController extends Controller
                     'warehouse_id' => $warehouse->id,
                 ])->first(['rented_space'])->rented_space;
         }
+
+        $test = null;
         return view('contracts.edit',compact('projects','action','method','contract','warehouses', 'commodities'));
     }
 
