@@ -832,7 +832,7 @@ class AdvanceNoticeController extends Controller
     public function edit(AdvanceNotice $advanceNotice)
     {
         // Check if owner
-        if(Auth::user()->id == $advanceNotice->user_id || (Auth::user()->hasRole('WarehouseSupervisor') && session()->get('current_project')->id == '337')) {
+        if(Auth::user()->id == $advanceNotice->user_id || (Auth::user()->hasRole('WarehouseSupervisor'))) {
             $parties = Party::select(['id', 'name'])->get();
             
             $action = route('advance_notices.update', $advanceNotice->id);
