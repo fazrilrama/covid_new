@@ -147,12 +147,19 @@ class AdvanceNoticeController extends Controller
                     ->where('project_id', session()->get('current_project')->id) 
                     ->where('user_id',Auth::user()->id) 
                     ->orderBy('id', 'desc')
-                    ->limit(2000)
+                    ->limit(50)
                     ->get(['user_id','id','code','origin_id','destination_id','shipper_id','consignee_id','etd','eta','status','employee_name', 'ref_code', 'created_at']);
         }
 
-        $collections = $collections->limit(50)->get();
-        $collections_closed = $collections_closed->limit(50)->get();
+
+        // BAK NIH
+        if(Auth::user()->hasRole('CargoOwner')) {
+            $collections = $collections;
+            $collections_closed = $collections_closed;
+        } else {
+            $collections = $collections->limit(50)->get();
+            $collections_closed = $collections_closed->limit(50)->get();
+        }
 
 
         if($collections) {
