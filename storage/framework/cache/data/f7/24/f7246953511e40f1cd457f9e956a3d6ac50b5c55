@@ -1,1 +1,0 @@
-1756274684a:1:{i:0;a:8:{s:2:"id";i:12;s:4:"name";s:13:"CommandCenter";s:12:"display_name";N;s:11:"description";N;s:10:"created_at";s:19:"2019-02-19 08:55:06";s:10:"updated_at";s:19:"2019-04-12 14:38:35";s:10:"deleted_at";N;s:5:"pivot";a:2:{s:7:"user_id";i:981;s:7:"role_id";i:12;}}}

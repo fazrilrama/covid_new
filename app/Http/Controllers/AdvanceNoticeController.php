@@ -73,6 +73,8 @@ class AdvanceNoticeController extends Controller
     {
         $message = NULL;
         $collections = null;
+        $detail_advance_notices = null;
+        $detail_advance_notices_ = null;
         $collections_closed = [];
 
         // 1. Kalau ada data cabang, filter datanya
