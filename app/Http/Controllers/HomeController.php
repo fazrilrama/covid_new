@@ -803,6 +803,9 @@ class HomeController extends Controller
 
     public function workOrder() {
 	set_time_limit(0);
+        $hour = null;
+        $hour3 = null;
+        $currentTime = null;
         // 1. Cek branch data if exists
         if($branch = Auth::user()->branch) {
             // Kalau inbound, keluarkan data yang consignee = branch
