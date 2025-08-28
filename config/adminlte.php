@@ -543,9 +543,9 @@ return [
         JeroenNoten\LaravelAdminLte\Menu\Filters\ActiveFilter::class,
         JeroenNoten\LaravelAdminLte\Menu\Filters\SubmenuFilter::class,
         JeroenNoten\LaravelAdminLte\Menu\Filters\ClassesFilter::class,
-      //  JeroenNoten\LaravelAdminLte\Menu\Filters\MyMenuGateway::class,
-          //  JeroenNoten\LaravelAdminLte\Menu\Filters\GateFilter::class,
-//        App\MyGateFilter::class,
+    //    JeroenNoten\LaravelAdminLte\Menu\Filters\MyMenuGateway::class,
+    //        JeroenNoten\LaravelAdminLte\Menu\Filters\GateFilter::class,
+       App\MyMenuFilter::class,
 
     ],
 
