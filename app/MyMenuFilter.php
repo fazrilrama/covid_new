@@ -7,7 +7,7 @@ use JeroenNoten\LaravelAdminLte\Menu\Builder;
 use JeroenNoten\LaravelAdminLte\Menu\Filters\FilterInterface;
 use Laratrust;
 
-class MyGateFilter implements FilterInterface
+class MyMenuFilter implements FilterInterface
 {
     public function transform($item, Builder $builder)
     {
