@@ -706,6 +706,9 @@ class ReportController extends Controller
         $data['date_to'] = $request->input('date_to');
         $data['warehouse'] = $request->input('warehouse');
 
+        $jumlah_outhandling = null;
+        $jumlah_inhandling = null;
+
         $submit = $request->input('submit');
 
         $search = !empty($data['item']) || !empty($data['date_from']) && !empty($data['date_to'] && !empty($data['warehouse']));
@@ -1830,6 +1833,9 @@ class ReportController extends Controller
 
     public function skuTransaction(Request $request) {
         $projectId = session()->get('current_project')->id;
+        $stock = null;
+        $stockInbound = null;
+        $get_warehouse = null;
         // $items = Project::find($projectId)->items;
         $items = Item::leftJoin('item_projects', 'items.id', 'item_projects.item_id')->where('item_projects.project_id', $projectId)->select(['items.*'])->get();
 
