@@ -1176,6 +1176,9 @@ class ReportController extends Controller
         $data['date_to'] = $request->input('date_to');
         $data['project'] = $request->input('project');
 
+        $show = null;
+        $item = null;
+
         $submit = $request->input('submit');
 
         $search = !empty($data['date_from']) && !empty($data['date_to']);
@@ -1320,6 +1323,9 @@ class ReportController extends Controller
         $projectId = session()->get('current_project')->id;
         $data['date_from'] = $request->input('date_from');
         $data['project'] = $request->input('project');
+
+        $show = null;
+        $item = null;
 
         $submit = $request->input('submit');
 
