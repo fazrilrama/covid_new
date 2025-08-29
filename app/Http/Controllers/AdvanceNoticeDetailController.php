@@ -345,6 +345,8 @@ class AdvanceNoticeDetailController extends Controller
         $method = 'PUT';
         $advanceNotice = AdvanceNotice::find($advanceNoticeDetail->stock_advance_notice_id);
 
+        $stock_allocation_item_id = null;
+
         // if(Auth::user()->id != $advanceNotice->user_id || $advanceNotice->status == 'Completed' || (Auth::user()->hasRole('WarehouseSupervisor') && $advanceNotice->project_id != '337')) {
         //     abort(403);
         // }
