@@ -516,6 +516,17 @@ return [
             ],
             'permission'    => 'menu-Deliveries',
         ],
+        [
+            'text'    => 'Monitoring SUHU',
+            'submenu' => [
+                [
+                    'text'          => 'Monitoring SUHU',
+                    'url'           => 'suhu',
+                    'permission'    => 'read-suhu',
+                ],
+            ],
+            'permission'    => 'menu-Deliveries',
+        ],
         
         // [
         //     'text'          => 'Activity Log',
