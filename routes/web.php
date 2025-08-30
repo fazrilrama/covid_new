@@ -110,6 +110,13 @@ Route::middleware(['auth','first-time-login'])->group(function () {
     Route::get('activity_logs', 'HomeController@activity_logs')->name('activity_logs');
     Route::get('cities/get-list', 'CityController@getList');
 
+    // SUHU
+    Route::get('/suhu', 'SuhuController@index')->name('suhu');
+    Route::post('/suhu/store', 'SuhuController@store')->name('suhu_store');
+    Route::post('/suhu/update', 'SuhuController@update')->name('suhu_update');
+    Route::post('/suhu/remove', 'SuhuController@remove')->name('suhu_remove');
+    Route::get('/suhu/get', 'SuhuController@get')->name('suhu_get');
+
     Route::middleware(['role:Superadmin|Admin-BGR'])->resource('cities', 'CityController');
 
     Route::get('activity_logs/print', 'HomeController@activity_logs_print');
