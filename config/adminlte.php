@@ -525,7 +525,7 @@ return [
                     'permission'    => 'read-suhu',
                 ],
             ],
-            'permission'    => 'menu-Deliveries',
+            'permission'    => 'read-suhu',
         ],
         
         // [
