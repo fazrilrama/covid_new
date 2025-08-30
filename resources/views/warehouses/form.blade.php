@@ -160,6 +160,16 @@
 				</select>
 			</div>
 		</div>
+		<div class="form-group required">
+			<label for="warehouse_type" class="col-sm-3 control-label">Warehouse Type</label>
+			<div class="col-sm-9">
+				<select class="form-control" name="warehouse_type">
+					@foreach($warehouse_type as $wt)
+					<option value="{{ $wt['id'] }}" @if($warehouse->type_id == $wt['id']) {{ 'selected' }} @endif>{{ $wt['name'] }}</option>
+					@endforeach
+				</select>
+			</div>
+		</div>
 		<div class="form-group">
 			<label for="percentage_buffer" class="col-sm-3 control-label">Buffer Stock</label>
 			<div class="col-sm-8">

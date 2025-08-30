@@ -10,7 +10,7 @@ class Warehouse extends Model
 {
     use LogsActivity;
 
-    protected static $logAttributes = ['name','email','code','address','phone_number','fax_number','postal_code','city_id','region_id','company_id','total_volume','total_weight','length','width','tall','ownership','longitude','latitude', 'branch'];
+    protected static $logAttributes = ['name','email','code','address','phone_number','fax_number','postal_code','city_id','region_id','company_id','total_volume','total_weight','length','width','tall','ownership','longitude','latitude', 'branch', 'type_id'];
 
     /**
      * The table associated with the model.

@@ -117,6 +117,8 @@ Route::middleware(['auth','first-time-login'])->group(function () {
     Route::post('/suhu/remove', 'SuhuController@remove')->name('suhu_remove');
     Route::get('/suhu/get', 'SuhuController@get')->name('suhu_get');
 
+    Route::post('/warehouses/update_add/{id}', 'WarehouseController@update_add')->name('warehouses.update_add');
+
     Route::middleware(['role:Superadmin|Admin-BGR'])->resource('cities', 'CityController');
 
     Route::get('activity_logs/print', 'HomeController@activity_logs_print');

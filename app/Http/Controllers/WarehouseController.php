@@ -21,6 +21,10 @@ use App\Exports\DivreWarehouseNonActiveExport;
 use App\Exports\WarehouseExport;
 use Excel;
 use App\Storage;
+use App\TypeWarehouseModel;
+use App\AdditionalWarehouseModel;
+use App\WarehouseAddMoreModel;
+use Illuminate\Support\Facades\Validator;
 
 class WarehouseController extends Controller
 {
@@ -34,10 +38,13 @@ class WarehouseController extends Controller
         $branch_id = auth()->user()->branch_id;
 
         if($branch_id){
-            $warehouse = Warehouse::where('branch_id', $branch_id)->get(['id','code','name','region_id','branch_id','length','width','is_active', 'ownership', 'status']);
+            $warehouse = Warehouse::leftJoin('warehouse_type', 'warehouse_type.id', '=', 'warehouses.type_id')
+            ->where('branch_id', $branch_id)->get(['warehouses.id','warehouses.code','warehouses.name','warehouses.region_id','warehouses.branch_id','warehouses.length','warehouses.width','warehouses.is_active', 'warehouses.ownership', 'warehouses.status', 'warehouse_type.name as type_warehouse']);
         } else {
-            $warehouse = Warehouse::get(['id','code','name','region_id','branch_id','length','width','total_volume','total_weight','is_active', 'ownership','status']);
+            $warehouse = Warehouse::leftJoin('warehouse_type', 'warehouse_type.id', '=', 'warehouses.type_id')
+            ->get(['warehouses.id','warehouses.code','warehouses.name','warehouses.region_id','warehouses.branch_id','warehouses.length','warehouses.width','warehouses.total_volume','warehouses.total_weight','warehouses.is_active', 'warehouses.ownership','warehouses.status', 'warehouse_type.name as type_warehouse', 'warehouse_type.color']);
         }
+
         if ($request->submit) {
             // $warehouses = $warehouse;
             return Excel::download(new WarehouseExport, 'warehouses-'. str_slug(now()) .'.xlsx');
@@ -146,6 +153,7 @@ class WarehouseController extends Controller
     public function edit(Warehouse $warehouse)
     {
         $action = route('warehouses.update', $warehouse->id);
+        $action_add = route('warehouses.update_add', $warehouse->id);
         $method = "PUT";
         $province = Region::find($warehouse->region_id);
         $regions = Region::pluck('name', 'id');
@@ -159,7 +167,14 @@ class WarehouseController extends Controller
                         })->get();
         }
 
-        return view('warehouses.edit',compact('action','method','warehouse','cities','regions','branches', 'province'));
+        $warehouse_type = TypeWarehouseModel::get();
+        $warehouse_add = AdditionalWarehouseModel::get();
+
+        $selected = WarehouseAddMoreModel::where('warehouse_id', $warehouse->id)
+            ->pluck('add_id') // ganti add_id sesuai nama kolom relasi
+            ->toArray();
+
+        return view('warehouses.edit',compact('action','method','warehouse','cities','regions','branches', 'province', 'warehouse_type', 'warehouse_add', 'action_add', 'selected'));
     }
 
     /**
@@ -169,6 +184,40 @@ class WarehouseController extends Controller
      * @param  \App\Warehouse  $warehouse
      * @return \Illuminate\Http\Response
      */
+
+    public function update_add(Request $request, $id) {
+        $data = $request->all();
+
+        DB::beginTransaction();
+
+        try {
+
+            $check = WarehouseAddMoreModel::where('warehouse_id', $id)->get();
+
+            if ($check->count() > 0) {
+                foreach ($check as $item) {
+                    $item->delete();
+                }
+            }
+
+            for ($i=0; $i < count($data['warehouse_add']); $i++) { 
+                $element = $data['warehouse_add'][$i];
+
+                WarehouseAddMoreModel::create([
+                    "add_id" => $element,
+                    "warehouse_id" => $id
+                ]);
+            }
+
+            DB::commit();
+            return redirect()->route('warehouses.index')->with('success', 'Data berhasil disimpan');
+        } catch (\Exception $e) {
+            DB::rollback();
+            return redirect()->route('warehouses.index')->with('error', 'Data gagal disimpan');
+        }
+
+    }
+
     public function update(Request $request, Warehouse $warehouse)
     {
         //Validate
@@ -184,7 +233,8 @@ class WarehouseController extends Controller
             'length' => 'numeric',
             'width' => 'numeric',
             'tall' => 'numeric',
-            'branch_id' => 'required'
+            'branch_id' => 'required',
+            'warehouse_type' => 'required'
         ]);
 
         $model = $warehouse;
@@ -208,6 +258,7 @@ class WarehouseController extends Controller
         $model->latitude = $request->get('latitude');
         $model->longitude = $request->get('longitude');
         $model->status = $request->get('status');
+        $model->type_id = $request->get('warehouse_type');
         $model->percentage_buffer = $request->get('percentage_buffer');
 
         $model->save();

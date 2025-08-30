@@ -43,7 +43,8 @@
 						<option value="Tidak Aktif">Tidak Aktif</option>
 					</select>
 					</th>
-					<th>Operasi</th>
+					<th>Operasi:</th>
+					<th>Type:</th>
 	                <th>Action:</th>
 	            </tr>
 	            <tbody>
@@ -101,6 +102,13 @@
 
 							</td>
 							<td><?php echo e($item->status ?? 'Belum Memilih'); ?></td>
+							<td>
+								<?php if($item->type_warehouse): ?>
+									<span class="badge bg-secondary"><?php echo e($item->type_warehouse); ?></span>
+								<?php else: ?>
+									<span class="badge bg-secondary">-</span>
+								<?php endif; ?>
+							</td>
 			            	<td>
 			            		<div class="btn-toolbar">
 			            			<div class="btn-group" role="group">

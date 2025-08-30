@@ -45,7 +45,8 @@
 						<option value="Tidak Aktif">Tidak Aktif</option>
 					</select>
 					</th>
-					<th>Operasi</th>
+					<th>Operasi:</th>
+					<th>Type:</th>
 	                <th>Action:</th>
 	            </tr>
 	            <tbody>
@@ -100,6 +101,13 @@
 							{{$item->is_active == 1 ? '.Aktif' : 'Tidak Aktif'}}
 							</td>
 							<td>{{ $item->status ?? 'Belum Memilih' }}</td>
+							<td>
+								@if($item->type_warehouse)
+									<span class="badge bg-secondary">{{ $item->type_warehouse }}</span>
+								@else
+									<span class="badge bg-secondary">-</span>
+								@endif
+							</td>
 			            	<td>
 			            		<div class="btn-toolbar">
 			            			<div class="btn-group" role="group">

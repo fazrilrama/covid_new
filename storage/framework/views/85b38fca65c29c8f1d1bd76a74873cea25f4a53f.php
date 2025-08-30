@@ -161,6 +161,16 @@
 				</select>
 			</div>
 		</div>
+		<div class="form-group required">
+			<label for="warehouse_type" class="col-sm-3 control-label">Warehouse Type</label>
+			<div class="col-sm-9">
+				<select class="form-control" name="warehouse_type">
+					<?php $__currentLoopData = $warehouse_type; $__env->addLoop($__currentLoopData); foreach($__currentLoopData as $wt): $__env->incrementLoopIndices(); $loop = $__env->getLastLoop(); ?>
+					<option value="<?php echo e($wt['id']); ?>" <?php if($warehouse->type_id == $wt['id']): ?> <?php echo e('selected'); ?> <?php endif; ?>><?php echo e($wt['name']); ?></option>
+					<?php endforeach; $__env->popLoop(); $loop = $__env->getLastLoop(); ?>
+				</select>
+			</div>
+		</div>
 		<div class="form-group">
 			<label for="percentage_buffer" class="col-sm-3 control-label">Buffer Stock</label>
 			<div class="col-sm-8">
